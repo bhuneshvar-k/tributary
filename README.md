@@ -17,13 +17,15 @@ register): see [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Status
 
-Phase 1 — FK graph & subset closure. `tributary inspect` prints the schema
-graph as JSON (phase 0). `tributary plan` computes a referentially-
-consistent subset from a seed table + predicate — merging real `pg_catalog`
-foreign keys with a declared `tributary.schema.yaml` (soft FKs, composite
-keys, polymorphic associations, ignores, and `dependency_breaks` for
-self-referencing/cyclic tables) — and prints a row-count-per-table report.
-Nothing moves data yet; that's phase 2.
+Phase 2 — one-shot export + load, the first usable MVP. `tributary inspect`
+prints the schema graph as JSON (phase 0). `tributary plan` computes a
+referentially-consistent subset from a seed table + predicate — merging
+real `pg_catalog` foreign keys with a declared `tributary.schema.yaml`
+(soft FKs, composite keys, polymorphic associations, ignores, and
+`dependency_breaks` for self-referencing/cyclic tables) — and prints a
+row-count-per-table report (phase 1). `tributary sync run` actually copies
+that subset from a source database into a target one, auto-creating the
+target schema if it's missing.
 
 ## Getting started
 
@@ -32,11 +34,16 @@ Nothing moves data yet; that's phase 2.
 go mod tidy
 make build
 
-TRIBUTARY_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
-
+export TRIBUTARY_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
 ./bin/tributary inspect
 
 ./bin/tributary plan \
+  --seed-table users --seed-predicate "id = 42" \
+  --schema-file tributary.schema.example.yaml
+
+export TRIBUTARY_SOURCE_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+export TRIBUTARY_TARGET_DSN="postgres://user:pass@localhost:5432/mydb_staging?sslmode=disable"
+./bin/tributary sync run \
   --seed-table users --seed-predicate "id = 42" \
   --schema-file tributary.schema.example.yaml
 ```
@@ -45,17 +52,34 @@ TRIBUTARY_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
 directly — tributary is an admin CLI, not a web input path, so it is not
 sanitized against injection.
 
+`sync run` requires either a pre-existing, compatible target schema or
+lets Tributary auto-create missing tables (columns, types, `NOT NULL`,
+`PRIMARY KEY`, real `FOREIGN KEY` constraints — not defaults, sequences,
+check constraints, indexes beyond the PK, triggers, views, or custom type
+definitions; `--no-create-schema` disables auto-creation and fails
+preflight on a missing table instead). **Re-running is safe and expected**:
+a row that already exists on target is updated to match source (upsert,
+keyed on primary key), a new row is inserted — nothing errors just because
+you ran it before. `--fresh` is a stronger reset: it deletes exactly this
+subset's previously-loaded rows before reloading, for when you want target
+to end up with nothing but exactly today's source data. A crashed run
+resumes automatically (per-table checkpoints in a local SQLite file,
+default `./.tributary/state.db`); `--no-resume` disables this.
+
 See [`tributary.schema.example.yaml`](tributary.schema.example.yaml) for
 the declared-relations file shape: soft FKs, composite keys, polymorphic
 associations, ignores, and `dependency_breaks`.
 
 ### Testing
 
-`go test ./...` runs the unit suite everywhere. `internal/graph`'s closure
-tests additionally need Docker (they spin up real Postgres via
-`testcontainers-go` — subset/replication correctness isn't trusted to
-mocks) and skip themselves cleanly with a clear message if no Docker
-daemon is reachable.
+`go test ./...` runs the unit suite everywhere (`pkg/config`, `internal/
+state`). `internal/load`'s and `cmd/tributary`'s integration tests
+additionally need Docker (they spin up real Postgres via
+`testcontainers-go` — subset/load correctness isn't trusted to mocks) and
+skip themselves cleanly with a clear message if no Docker daemon is
+reachable. `internal/graph` and `internal/subset` currently have no test
+coverage of their own (a prior fixture using business-domain table names
+was removed; not yet replaced).
 
 ## License
 

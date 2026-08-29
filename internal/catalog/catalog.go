@@ -11,10 +11,22 @@ import (
 )
 
 // Column describes a single column of a table.
+//
+// CharMaxLength, NumericPrecision, and NumericScale are nil when not
+// applicable to Type (e.g. a plain "integer" or "text" column). UDTName is
+// only meaningful when Type is "USER-DEFINED" — Postgres's
+// information_schema reports custom types (enums, domains, composites)
+// that way, with the actual type name available separately; used by
+// internal/load to generate a DDL column type that isn't just the literal
+// string "USER-DEFINED".
 type Column struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	IsNullable bool   `json:"is_nullable"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	IsNullable       bool   `json:"is_nullable"`
+	CharMaxLength    *int   `json:"char_max_length,omitempty"`
+	NumericPrecision *int   `json:"numeric_precision,omitempty"`
+	NumericScale     *int   `json:"numeric_scale,omitempty"`
+	UDTName          string `json:"udt_name,omitempty"`
 }
 
 // ForeignKey describes a foreign key constraint discovered in pg_catalog.
@@ -58,6 +70,13 @@ func Inspect(ctx context.Context, connString string) (*Schema, error) {
 	}
 	defer conn.Close(ctx)
 
+	return InspectConn(ctx, conn)
+}
+
+// InspectConn is Inspect against an already-open connection, for callers
+// (internal/load) that need to introspect a database they're also about to
+// write to, without opening a second connection to it.
+func InspectConn(ctx context.Context, conn *pgx.Conn) (*Schema, error) {
 	tables, err := fetchTables(ctx, conn)
 	if err != nil {
 		return nil, fmt.Errorf("fetch tables: %w", err)
@@ -96,10 +115,15 @@ func key(schema, name string) string {
 }
 
 // fetchTables reads every table and column from information_schema,
-// skipping the system schemas.
+// skipping the system schemas. Length/precision/scale and the underlying
+// user-defined type name are read alongside the bare type name so
+// internal/load can generate a faithful column type (e.g. "varchar(50)",
+// "numeric(10,2)") rather than an unbounded/unconstrained one when
+// auto-creating a target table.
 func fetchTables(ctx context.Context, conn *pgx.Conn) ([]Table, error) {
 	const q = `
-		select table_schema, table_name, column_name, data_type, is_nullable
+		select table_schema, table_name, column_name, data_type, is_nullable,
+			character_maximum_length, numeric_precision, numeric_scale, udt_name
 		from information_schema.columns
 		where table_schema not in ('pg_catalog', 'information_schema')
 		order by table_schema, table_name, ordinal_position;
@@ -114,8 +138,10 @@ func fetchTables(ctx context.Context, conn *pgx.Conn) ([]Table, error) {
 	var order []string
 
 	for rows.Next() {
-		var schema, table, column, dataType, nullable string
-		if err := rows.Scan(&schema, &table, &column, &dataType, &nullable); err != nil {
+		var schema, table, column, dataType, nullable, udtName string
+		var charMaxLength, numericPrecision, numericScale *int
+		if err := rows.Scan(&schema, &table, &column, &dataType, &nullable,
+			&charMaxLength, &numericPrecision, &numericScale, &udtName); err != nil {
 			return nil, err
 		}
 		k := key(schema, table)
@@ -126,9 +152,13 @@ func fetchTables(ctx context.Context, conn *pgx.Conn) ([]Table, error) {
 			order = append(order, k)
 		}
 		t.Columns = append(t.Columns, Column{
-			Name:       column,
-			Type:       dataType,
-			IsNullable: nullable == "YES",
+			Name:             column,
+			Type:             dataType,
+			IsNullable:       nullable == "YES",
+			CharMaxLength:    charMaxLength,
+			NumericPrecision: numericPrecision,
+			NumericScale:     numericScale,
+			UDTName:          udtName,
 		})
 	}
 	if err := rows.Err(); err != nil {

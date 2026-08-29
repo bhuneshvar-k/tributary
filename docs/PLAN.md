@@ -31,7 +31,7 @@ sources.
 |---|-------|--------|
 | 0 | Repo & schema introspection (`tributary inspect`) | done |
 | 1 | FK graph & subset closure, incl. declared relations (`tributary plan`) | done |
-| 2 | One-shot export + load (usable MVP) | not started |
+| 2 | One-shot export + load (usable MVP) (`tributary sync run`) | done |
 | 3 | Masking & transform pipeline | not started |
 | 4 | Incremental sync via logical replication | not started |
 | 5 | Observability & hardening | not started |
@@ -39,3 +39,29 @@ sources.
 
 See the linked artifact for the full write-up: pitch, architecture diagram,
 tech stack table, per-phase deliverables, and the risk register.
+
+## Phase 2 notes (superseding the linked artifact's risk register)
+
+The design initially shipped `sync run` as a hard error on re-invocation
+against an already-synced target (requiring `--fresh` to reload), on the
+reasoning that idempotent re-sync was phase 4's job. Real usage
+immediately showed that reasoning wrong: re-running against a target with
+some overlapping rows is a completely ordinary thing to want to do, not
+an edge case. `sync run` now does what the original risk register said
+from the start — "upserts keyed on primary key, not blind inserts" —
+as its default behavior: a row that already exists on target is updated
+to match source, a new row is inserted, and nothing about a repeat
+invocation errors. `--fresh` remains as a stronger reset (row-scoped
+delete-then-reload) for when upsert alone isn't enough. Mechanically,
+this is `COPY` into an unconstrained per-table temp staging table
+followed by one `INSERT ... ON CONFLICT (primary key) DO UPDATE` merge —
+see `internal/load`'s package doc comment.
+
+Phase 2 also went further than the artifact's original scope: the target
+database's schema is auto-created if missing (columns, types, `NOT NULL`,
+`PRIMARY KEY`, real `FOREIGN KEY` constraints) rather than requiring a
+pre-provisioned target — see `internal/load.EnsureSchema`. This does not
+replicate defaults, sequences/identity, check constraints, indexes beyond
+the implicit PK index, triggers, views, or custom type *definitions*
+(enum/domain/composite bodies) — a column using a custom type must already
+have that type defined on the target.

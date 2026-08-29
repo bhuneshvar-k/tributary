@@ -1,0 +1,10 @@
+# Declared relations for testdata/phase2/source.sql, used by internal/load's
+# tests. Only the polymorphic association needs declaring — every other
+# relationship in source.sql is a real FK constraint.
+
+relations:
+  - from: poly_source_table.target_id
+    polymorphic_type: poly_source_table.target_type
+    targets:
+      A: poly_target_a.id
+      B: poly_target_b.id
