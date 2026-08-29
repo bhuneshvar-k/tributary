@@ -70,3 +70,25 @@ showed requiring every enum to be pre-created by hand was more friction
 than the fidelity risk was worth. A domain, composite, or range type is
 still a hard, named preflight error: those aren't safe to recreate from
 just a type name.
+
+## Phase 1 revision: downstream-only traversal became the default
+
+`internal/graph.ComputeClosure` originally walked every discovered row in
+both directions unconditionally — a row pulled in only to satisfy a
+foreign key (a required parent) was just as much a fan-out point as the
+seed itself. Real usage (via `sync run`, but the fix lives in phase 1's
+closure algorithm and applies to `tributary plan` too) showed this
+explodes badly through any shared "hub" row: seeding one user pulled in
+their clinic membership, which needed their company to exist, and then
+fanned back out from that company to *every other member's* membership
+row and from there to every other user — the seed's whole tenant, not the
+seed.
+
+`ComputeClosure` now defaults to `ModeDownstreamOnly`: a row reached via
+an outgoing edge (a required parent) is still fetched, but doesn't itself
+become a new fan-out point — unless it turns out to also be genuinely
+reachable by fanning out from the seed through some other path, in which
+case it's promoted (see `rowKind` in `internal/graph/closure.go`). The
+original unconditional behavior survives as `ModeFull`, opt-in via
+`--include-upstream` on both `plan` and `sync run`, for when "this seed's
+whole tenant" is actually the intended scope.

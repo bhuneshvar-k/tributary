@@ -37,6 +37,7 @@ func newSyncRunCmd() *cobra.Command {
 		seedTable, seedPredicate string
 		schemaFilePath           string
 		strictCycles             bool
+		includeUpstream          bool
 		fresh                    bool
 		noCreateSchema           bool
 		stateDBPath              string
@@ -57,7 +58,14 @@ on target is updated to match source (INSERT ... ON CONFLICT DO UPDATE,
 keyed on primary key); a new row is inserted. --fresh instead deletes
 exactly this subset's previously-loaded rows (by primary key, never a
 TRUNCATE) before reloading — a stronger reset than an upsert, for when
-you want target to end up with nothing but exactly today's source data.`,
+you want target to end up with nothing but exactly today's source data.
+
+By default the subset is scoped downstream of the seed: a required parent
+row (e.g. the company a seeded user's membership references) is always
+included, but isn't itself used to fan back out to its other members —
+only what's actually reachable by fanning out from the seed is. Pass
+--include-upstream to fan out from every row regardless of how it was
+reached (the seed's whole company, not just the seed).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if sourceDSN == "" {
 				sourceDSN = os.Getenv("TRIBUTARY_SOURCE_DSN")
@@ -79,7 +87,8 @@ you want target to end up with nothing but exactly today's source data.`,
 				sourceDSN: sourceDSN, targetDSN: targetDSN,
 				seedTable: seedTable, seedPredicate: seedPredicate,
 				schemaFilePath: schemaFilePath, strictCycles: strictCycles,
-				fresh: fresh, createSchema: !noCreateSchema,
+				includeUpstream: includeUpstream,
+				fresh:           fresh, createSchema: !noCreateSchema,
 				stateDBPath: stateDBPath, resume: !noResume,
 				format: format,
 			})
@@ -92,6 +101,7 @@ you want target to end up with nothing but exactly today's source data.`,
 	cmd.Flags().StringVar(&seedPredicate, "seed-predicate", "", `Raw SQL WHERE-clause fragment selecting seed rows, e.g. "id = 42"`)
 	cmd.Flags().StringVar(&schemaFilePath, "schema-file", "", "Path to a tributary.schema.yaml file (optional)")
 	cmd.Flags().BoolVar(&strictCycles, "strict-cycles", false, "Fail on an unresolved FK cycle instead of auto-breaking it")
+	cmd.Flags().BoolVar(&includeUpstream, "include-upstream", false, "Also fan out from required-parent rows (e.g. every other member of the seed's company), not just the seed's own downstream data")
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "Delete this subset's previously-loaded rows from target first (stronger than the default upsert), and abandon any stuck in-progress run for this configuration")
 	cmd.Flags().BoolVar(&noCreateSchema, "no-create-schema", false, "Do not auto-create missing target tables; fail preflight instead")
 	cmd.Flags().StringVar(&stateDBPath, "state-db", "./.tributary/state.db", "Path to the checkpoint SQLite database")
@@ -105,6 +115,7 @@ type syncRunOptions struct {
 	seedTable, seedPredicate string
 	schemaFilePath           string
 	strictCycles             bool
+	includeUpstream          bool
 	fresh                    bool
 	createSchema             bool
 	stateDBPath              string
@@ -152,10 +163,16 @@ func runSyncRun(opts syncRunOptions) error {
 		breaks = sf.DependencyBreaks
 	}
 
+	mode := graph.ModeDownstreamOnly
+	if opts.includeUpstream {
+		mode = graph.ModeFull
+	}
+
 	seedID := graph.NodeID(qualify(opts.seedTable))
-	closure, err := graph.ComputeClosure(ctx, sourceConn, g, seedID, opts.seedPredicate, graph.CycleOptions{
+	closure, err := graph.ComputeClosure(ctx, sourceConn, g, seedID, opts.seedPredicate, graph.ClosureOptions{
 		Breaks:            breaks,
 		OnUnresolvedCycle: policy,
+		Mode:              mode,
 	})
 	if err != nil {
 		return err

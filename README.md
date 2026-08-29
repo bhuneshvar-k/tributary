@@ -12,6 +12,14 @@ rows that need to move to stay referentially valid. It loads that subset
 into a target database, masks anything sensitive on the way in, and keeps
 it current afterwards via logical replication instead of re-dumping.
 
+By default the subset stays scoped **downstream** of the seed: a row
+needed only to satisfy a foreign key (e.g. the company a seeded user's
+membership references) is included, but isn't itself used to fan back out
+to everything else that references it (every other member of that
+company). Pass `--include-upstream` to get the old fully bidirectional
+walk instead — useful when you deliberately want "this seed's whole
+tenant," not just what's reachable downstream of it.
+
 Full project plan (architecture, tech stack, phased roadmap, risk
 register): see [`docs/PLAN.md`](docs/PLAN.md).
 

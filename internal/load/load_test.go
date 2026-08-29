@@ -147,7 +147,7 @@ func runClosureAndOrder(t *testing.T, sf *config.SchemaFile, seedTable, predicat
 		t.Fatalf("graph.Build: %v", err)
 	}
 
-	closure, err := graph.ComputeClosure(ctx, sourceConn, g, graph.NodeID(seedTable), predicate, graph.CycleOptions{})
+	closure, err := graph.ComputeClosure(ctx, sourceConn, g, graph.NodeID(seedTable), predicate, graph.ClosureOptions{})
 	if err != nil {
 		t.Fatalf("graph.ComputeClosure: %v", err)
 	}
@@ -201,6 +201,51 @@ func TestLoad_LeafAndSingleFKTable(t *testing.T) {
 	_, err = targetConn.Exec(ctx, `INSERT INTO child_table (id, parent_id, name) VALUES (999901, 999999, 'orphan')`)
 	if err == nil {
 		t.Fatal("expected the auto-created FK constraint to reject a child referencing a nonexistent parent")
+	}
+}
+
+// TestClosure_DownstreamOnlyExcludesSiblingsViaSharedParent exercises
+// internal/graph.ComputeClosure's TraversalMode directly (reusing this
+// file's source/target harness even though it doesn't touch Load/target,
+// since internal/graph has no testcontainers harness of its own — see
+// testdata/README.md's coverage notes). This is the exact shape of the
+// real-world bug report that motivated ModeDownstreamOnly: seeding a row
+// that references a shared parent must not fan back out to every other
+// row referencing that same parent.
+func TestClosure_DownstreamOnlyExcludesSiblingsViaSharedParent(t *testing.T) {
+	requireContainers(t)
+	ctx := context.Background()
+
+	mustExecSource(t, ctx, `INSERT INTO parent_table (id, name) VALUES (1101, 'shared-parent')`)
+	mustExecSource(t, ctx, `INSERT INTO child_table (id, parent_id, name) VALUES
+		(1101, 1101, 'seed-child'), (1102, 1101, 'sibling-child')`)
+
+	sourceSchema := loadSourceSchema(t)
+	g, err := graph.Build(sourceSchema, nil)
+	if err != nil {
+		t.Fatalf("graph.Build: %v", err)
+	}
+
+	// Seed from the CHILD, not the parent — this is what pulls parent_table
+	// in as a required parent (an outgoing-edge fetch), which must not fan
+	// back out to the sibling child under the default mode.
+	downstream, err := graph.ComputeClosure(ctx, sourceConn, g, "public.child_table", "id = 1101", graph.ClosureOptions{})
+	if err != nil {
+		t.Fatalf("ComputeClosure (default, downstream-only): %v", err)
+	}
+	if n := len(downstream.Rows["public.child_table"]); n != 1 {
+		t.Fatalf("downstream-only: got %d child_table rows, want 1 (seed only, not the sibling)", n)
+	}
+	if n := len(downstream.Rows["public.parent_table"]); n != 1 {
+		t.Fatal("downstream-only: expected the required parent row to still be included")
+	}
+
+	full, err := graph.ComputeClosure(ctx, sourceConn, g, "public.child_table", "id = 1101", graph.ClosureOptions{Mode: graph.ModeFull})
+	if err != nil {
+		t.Fatalf("ComputeClosure (--include-upstream / ModeFull): %v", err)
+	}
+	if n := len(full.Rows["public.child_table"]); n != 2 {
+		t.Fatalf("ModeFull: got %d child_table rows, want 2 (seed + sibling, fanned out via the shared parent)", n)
 	}
 }
 

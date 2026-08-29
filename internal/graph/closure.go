@@ -83,22 +83,70 @@ const (
 	PolicyError
 )
 
-// CycleOptions configures how the closure walker handles self-referencing
-// and cyclic edges. Breaks is expected to have already been validated
+// TraversalMode controls whether the walk fans back out through a row that
+// was only pulled in to satisfy a referential dependency (a "parent"), or
+// stays scoped to what's actually downstream of the seed.
+//
+// Concretely: seeding one row of a "member" table that references both a
+// "user" and a shared "company" pulls in that company (a required parent —
+// referential validity needs it to exist). Under ModeFull, the walker then
+// also fans back out *from* that company to every other member row
+// referencing it, and from there to every other user — the seed's whole
+// company, not just the seed. Under ModeDownstreamOnly, the company is
+// still fetched (still needed for referential validity), but is not
+// itself used as a new fan-out point, so those siblings are excluded.
+type TraversalMode int
+
+const (
+	// ModeDownstreamOnly (the default) only follows incoming/polymorphic-
+	// reverse edges — the direction that fans a row *out* to whatever
+	// references it — from the seed itself and rows reached by fanning out
+	// from another such row. A row reached purely via an outgoing edge
+	// (fetching a required parent) is still fetched, but its own incoming
+	// edges aren't walked — unless it turns out to also be reachable via a
+	// genuine downstream path, in which case it's promoted and its
+	// incoming edges are walked after all (see rowKind).
+	ModeDownstreamOnly TraversalMode = iota
+	// ModeFull fans out from every row regardless of how it was reached —
+	// the original, unconditional bidirectional walk. Selected via
+	// --include-upstream.
+	ModeFull
+)
+
+// ClosureOptions configures the closure walk: cycle handling (self-
+// referencing/cyclic outgoing edges) and traversal mode (see
+// TraversalMode). Breaks is expected to have already been validated
 // against g — Build rejects a dependency_breaks entry naming an edge with
 // no cycle — so Closure does not re-validate it.
-type CycleOptions struct {
+type ClosureOptions struct {
 	Breaks            []config.DependencyBreak
 	OnUnresolvedCycle UnresolvedCyclePolicy
+	Mode              TraversalMode
 }
 
-func (o CycleOptions) matchesBreak(table NodeID, column string) bool {
+func (o ClosureOptions) matchesBreak(table NodeID, column string) bool {
 	for _, b := range o.Breaks {
 		if NodeID(b.TableKey()) == table && b.Column == column {
 			return true
 		}
 	}
 	return false
+}
+
+// rowKind records why a row was pulled into the closure, for
+// ModeDownstreamOnly's fan-out gating (see TraversalMode). Under ModeFull
+// every row behaves as kindDownstream, so kind never restricts anything.
+type rowKind int
+
+const (
+	kindDownstream rowKind = iota
+	kindUpstreamParent
+)
+
+// queueItem pairs a discovered row with the kind it was discovered as.
+type queueItem struct {
+	row  RowRef
+	kind rowKind
 }
 
 // Querier is the subset of *pgx.Conn (and *pgx.Tx) Closure needs. It
@@ -114,16 +162,18 @@ type Querier interface {
 // fragment, interpolated directly (same admin-tool trust model as the rest
 // of the CLI: not sanitized against injection, see cmd/tributary).
 //
-// It walks g in both directions from every discovered row: outgoing edges
-// (rows this row's table points at — its parents) and incoming edges
-// (rows that point at this row — its children), including polymorphic
-// edges resolved through each row's runtime discriminator column value.
-// Self-referencing/cyclic outgoing edges are handled per opts — see
-// CycleOptions and AppliedBreak; incoming traversal has no special cycle
+// It walks g from every discovered row: outgoing edges (rows this row's
+// table points at — its parents, needed for referential validity, always
+// followed) and, per opts.Mode (see TraversalMode), incoming edges (rows
+// that point at this row — its children) and polymorphic-reverse edges,
+// including polymorphic edges resolved through each row's runtime
+// discriminator column value. Self-referencing/cyclic outgoing edges are
+// handled per opts — see ClosureOptions and AppliedBreak; incoming
+// traversal (when it applies under the current mode) has no special cycle
 // handling, since fan-in (e.g. every order for a user) is the intended
-// behavior, and the row-level visited set alone is sufficient to terminate
-// even a malformed real cycle in the data.
-func ComputeClosure(ctx context.Context, conn Querier, g *Graph, seedTable NodeID, predicate string, opts CycleOptions) (*Closure, error) {
+// behavior there, and the row-level visited set alone is sufficient to
+// terminate even a malformed real cycle in the data.
+func ComputeClosure(ctx context.Context, conn Querier, g *Graph, seedTable NodeID, predicate string, opts ClosureOptions) (*Closure, error) {
 	seed, ok := g.Nodes[seedTable]
 	if !ok {
 		return nil, fmt.Errorf("no such table %q in catalog", seedTable)
@@ -138,7 +188,7 @@ func ComputeClosure(ctx context.Context, conn Querier, g *Graph, seedTable NodeI
 		g:           g,
 		opts:        opts,
 		closure:     &Closure{Rows: make(map[NodeID]map[string]RowRef)},
-		visited:     make(map[NodeID]map[string]bool),
+		kindOf:      make(map[NodeID]map[string]rowKind),
 		brokenEdges: make(map[string]bool),
 	}
 
@@ -147,30 +197,30 @@ func ComputeClosure(ctx context.Context, conn Querier, g *Graph, seedTable NodeI
 		return nil, fmt.Errorf("seed query on %q: %w", seedTable, err)
 	}
 
-	var queue []RowRef
+	var queue []queueItem
 	for _, r := range seedRows {
-		if w.markVisited(r) {
-			queue = append(queue, r)
+		if w.discover(r, kindDownstream) {
+			queue = append(queue, queueItem{row: r, kind: kindDownstream})
 		}
 	}
 
 	for len(queue) > 0 {
-		row := queue[0]
+		item := queue[0]
 		queue = queue[1:]
 
-		row, err = w.fetchData(row)
+		row, err := w.fetchData(item.row)
 		if err != nil {
 			return nil, fmt.Errorf("fetch %s row: %w", row.Table, err)
 		}
 		w.store(row)
 
-		next, err := w.expand(row)
+		next, err := w.expand(row, item.kind)
 		if err != nil {
 			return nil, err
 		}
-		for _, r := range next {
-			if w.markVisited(r) {
-				queue = append(queue, r)
+		for _, ni := range next {
+			if w.discover(ni.row, ni.kind) {
+				queue = append(queue, ni)
 			}
 		}
 	}
@@ -183,25 +233,36 @@ type walker struct {
 	ctx  context.Context
 	conn Querier
 	g    *Graph
-	opts CycleOptions
+	opts ClosureOptions
 
 	closure     *Closure
-	visited     map[NodeID]map[string]bool
+	kindOf      map[NodeID]map[string]rowKind
 	brokenEdges map[string]bool // "table.column" -> already broken
 }
 
-func (w *walker) markVisited(r RowRef) bool {
-	set, ok := w.visited[r.Table]
+// discover records row's kind and reports whether it should be
+// (re)enqueued: true the first time a row is seen, and again if a row
+// previously seen only as kindUpstreamParent is now reached as
+// kindDownstream — an upgrade, since its incoming edges weren't walked the
+// first time (see TraversalMode). Under ModeFull every row is always
+// discovered as kindDownstream, so this upgrade path never triggers there.
+func (w *walker) discover(r RowRef, kind rowKind) bool {
+	set, ok := w.kindOf[r.Table]
 	if !ok {
-		set = make(map[string]bool)
-		w.visited[r.Table] = set
+		set = make(map[string]rowKind)
+		w.kindOf[r.Table] = set
 	}
 	k := r.keyString()
-	if set[k] {
-		return false
+	existing, seen := set[k]
+	if !seen {
+		set[k] = kind
+		return true
 	}
-	set[k] = true
-	return true
+	if existing == kindUpstreamParent && kind == kindDownstream {
+		set[k] = kindDownstream
+		return true
+	}
+	return false
 }
 
 func (w *walker) store(row RowRef) {
@@ -295,11 +356,22 @@ func extractKey(pk []string, data map[string]any) map[string]any {
 }
 
 // expand finds every row reachable from row in one hop: outgoing edges
-// (its parents, including polymorphic), incoming edges (its children), and
-// polymorphic-reverse edges (children of a polymorphic association whose
-// target is row's table).
-func (w *walker) expand(row RowRef) ([]RowRef, error) {
-	var next []RowRef
+// (its parents, including polymorphic — always followed, needed for
+// referential validity regardless of mode) and, when kind/opts.Mode allow
+// it (see TraversalMode), incoming edges (its children) and polymorphic-
+// reverse edges (children of a polymorphic association whose target is
+// row's table).
+func (w *walker) expand(row RowRef, kind rowKind) ([]queueItem, error) {
+	var next []queueItem
+
+	// A parent fetched via an outgoing edge is kindUpstreamParent under
+	// ModeDownstreamOnly (it won't itself become a new fan-out point unless
+	// later promoted) — or just kindDownstream under ModeFull, where that
+	// distinction doesn't exist.
+	parentKind := kindDownstream
+	if w.opts.Mode == ModeDownstreamOnly {
+		parentKind = kindUpstreamParent
+	}
 
 	for _, e := range w.g.Outgoing[row.Table] {
 		if e.Source == EdgePolymorphic {
@@ -307,7 +379,9 @@ func (w *walker) expand(row RowRef) ([]RowRef, error) {
 			if err != nil {
 				return nil, err
 			}
-			next = append(next, rs...)
+			for _, r := range rs {
+				next = append(next, queueItem{row: r, kind: parentKind})
+			}
 			continue
 		}
 
@@ -326,24 +400,34 @@ func (w *walker) expand(row RowRef) ([]RowRef, error) {
 			return nil, err
 		}
 		if ok {
-			next = append(next, r)
+			next = append(next, queueItem{row: r, kind: parentKind})
 		}
 	}
 
-	for _, e := range w.g.Incoming[row.Table] {
-		rs, err := w.followIncoming(row, e)
-		if err != nil {
-			return nil, err
+	// Fan-out (incoming / polymorphic-reverse) only applies from a
+	// downstream row — the seed itself, or a row reached by fanning out
+	// from another downstream row — under ModeDownstreamOnly; under
+	// ModeFull it always applies.
+	if w.opts.Mode == ModeFull || kind == kindDownstream {
+		for _, e := range w.g.Incoming[row.Table] {
+			rs, err := w.followIncoming(row, e)
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range rs {
+				next = append(next, queueItem{row: r, kind: kindDownstream})
+			}
 		}
-		next = append(next, rs...)
-	}
 
-	for _, pe := range w.g.PolyReverse[row.Table] {
-		rs, err := w.followPolyReverse(row, pe)
-		if err != nil {
-			return nil, err
+		for _, pe := range w.g.PolyReverse[row.Table] {
+			rs, err := w.followPolyReverse(row, pe)
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range rs {
+				next = append(next, queueItem{row: r, kind: kindDownstream})
+			}
 		}
-		next = append(next, rs...)
 	}
 
 	return next, nil

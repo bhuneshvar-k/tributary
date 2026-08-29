@@ -19,12 +19,13 @@ import (
 
 func newPlanCmd() *cobra.Command {
 	var (
-		dsn            string
-		seedTable      string
-		seedPredicate  string
-		schemaFilePath string
-		strictCycles   bool
-		format         string
+		dsn             string
+		seedTable       string
+		seedPredicate   string
+		schemaFilePath  string
+		strictCycles    bool
+		includeUpstream bool
+		format          string
 	)
 
 	cmd := &cobra.Command{
@@ -34,7 +35,14 @@ func newPlanCmd() *cobra.Command {
 
 --seed-predicate is a raw SQL WHERE-clause fragment, interpolated
 directly — tributary is an admin tool, not a web input path, so it is not
-sanitized against injection.`,
+sanitized against injection.
+
+By default the subset is scoped downstream of the seed: a required parent
+row (e.g. the company a seeded user's membership references) is always
+included, but isn't itself used to fan back out to its other members —
+only what's actually reachable by fanning out from the seed is. Pass
+--include-upstream to fan out from every row regardless of how it was
+reached (the seed's whole company, not just the seed).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dsn == "" {
 				dsn = os.Getenv("TRIBUTARY_DSN")
@@ -81,10 +89,16 @@ sanitized against injection.`,
 				breaks = sf.DependencyBreaks
 			}
 
+			mode := graph.ModeDownstreamOnly
+			if includeUpstream {
+				mode = graph.ModeFull
+			}
+
 			seedID := graph.NodeID(qualify(seedTable))
-			closure, err := graph.ComputeClosure(ctx, conn, g, seedID, seedPredicate, graph.CycleOptions{
+			closure, err := graph.ComputeClosure(ctx, conn, g, seedID, seedPredicate, graph.ClosureOptions{
 				Breaks:            breaks,
 				OnUnresolvedCycle: policy,
+				Mode:              mode,
 			})
 			if err != nil {
 				return err
@@ -116,6 +130,7 @@ sanitized against injection.`,
 	cmd.Flags().StringVar(&seedPredicate, "seed-predicate", "", `Raw SQL WHERE-clause fragment selecting seed rows, e.g. "id = 42"`)
 	cmd.Flags().StringVar(&schemaFilePath, "schema-file", "", "Path to a tributary.schema.yaml file (optional; omit for a catalog-only graph)")
 	cmd.Flags().BoolVar(&strictCycles, "strict-cycles", false, "Fail on an unresolved FK cycle instead of auto-breaking it (best-effort is the default)")
+	cmd.Flags().BoolVar(&includeUpstream, "include-upstream", false, "Also fan out from required-parent rows (e.g. every other member of the seed's company), not just the seed's own downstream data")
 	cmd.Flags().StringVar(&format, "format", "text", `Output format: "text" or "json"`)
 	return cmd
 }
