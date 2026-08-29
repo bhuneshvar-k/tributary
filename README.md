@@ -54,10 +54,11 @@ sanitized against injection.
 
 `sync run` requires either a pre-existing, compatible target schema or
 lets Tributary auto-create missing tables (columns, types, `NOT NULL`,
-`PRIMARY KEY`, real `FOREIGN KEY` constraints — not defaults, sequences,
-check constraints, indexes beyond the PK, triggers, views, or custom type
-definitions; `--no-create-schema` disables auto-creation and fails
-preflight on a missing table instead). **Re-running is safe and expected**:
+`PRIMARY KEY`, real `FOREIGN KEY` constraints, and missing enum types —
+not defaults, sequences, check constraints, indexes beyond the PK,
+triggers, views, or non-enum custom types like domains/composites;
+`--no-create-schema` disables auto-creation and fails preflight on a
+missing table instead). **Re-running is safe and expected**:
 a row that already exists on target is updated to match source (upsert,
 keyed on primary key), a new row is inserted — nothing errors just because
 you ran it before. `--fresh` is a stronger reset: it deletes exactly this

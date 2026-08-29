@@ -11,9 +11,11 @@ integration tests seed a source container from: leaf and single-FK tables,
 a composite-key parent/child pair (parent keyed `(tenant_id, id)` so the
 composite pairing is actually exercised, not just column names that happen
 to be globally unique), a nullable self-referencing table, a `NOT NULL`
-self-referencing table, a polymorphic source/target pair, and a column
-using a custom Postgres enum type (deliberately not created on the target
-database, to exercise the missing-custom-type preflight check).
+self-referencing table, a polymorphic source/target pair, a column using
+a custom Postgres enum type (deliberately not created on the target
+database, to exercise auto-creation of a missing enum), and a column
+using a domain type (also deliberately absent from target, to exercise
+the still-hard-error case for a non-enum custom type).
 `orphaned_fk_table` is also declared, shaped for the not-yet-written
 orphaned-FK test (see Coverage status below) — a test using it still needs
 to insert its dangling row itself (trigger disabled around the insert),
@@ -33,11 +35,13 @@ table.
 ## Coverage status
 
 `internal/load` and `cmd/tributary`'s core phase-2 logic (schema
-auto-creation, composite-key loading, self-referencing null-then-backfill
-in both the full-DAG and excluded-parent cases, the `NOT NULL`
-self-reference preflight error, polymorphic loading, and upsert-on-rerun —
-a changed source row updates in place on target rather than erroring or
-duplicating) has integration test coverage. **Not yet covered** by an
+auto-creation including missing-enum-type auto-creation and the
+still-hard-error non-enum-custom-type case, composite-key loading,
+self-referencing null-then-backfill in both the full-DAG and
+excluded-parent cases, the `NOT NULL` self-reference preflight error,
+polymorphic loading, and upsert-on-rerun — a changed source row updates in
+place on target rather than erroring or duplicating) has integration test
+coverage. **Not yet covered** by an
 automated test: crash/resume behavior (interrupting a run mid-sequence or
 mid-transaction and verifying it picks back up correctly), the
 orphaned-FK error-translation path (`orphaned_fk_table` is declared but no

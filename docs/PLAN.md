@@ -62,6 +62,11 @@ database's schema is auto-created if missing (columns, types, `NOT NULL`,
 `PRIMARY KEY`, real `FOREIGN KEY` constraints) rather than requiring a
 pre-provisioned target — see `internal/load.EnsureSchema`. This does not
 replicate defaults, sequences/identity, check constraints, indexes beyond
-the implicit PK index, triggers, views, or custom type *definitions*
-(enum/domain/composite bodies) — a column using a custom type must already
-have that type defined on the target.
+the implicit PK index, triggers, or views. Enum types are the one custom
+type *definition* that does get auto-created (`CREATE TYPE ... AS ENUM`,
+same labels/order as source, via `internal/catalog.Schema.Enums`) — real
+usage against a production-shaped schema (TypeORM-style enum columns)
+showed requiring every enum to be pre-created by hand was more friction
+than the fidelity risk was worth. A domain, composite, or range type is
+still a hard, named preflight error: those aren't safe to recreate from
+just a type name.

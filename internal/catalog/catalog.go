@@ -59,6 +59,15 @@ type Table struct {
 // associations) that pg_catalog can't see at all — that merge is phase 1.
 type Schema struct {
 	Tables []Table `json:"tables"`
+
+	// Enums maps a custom enum type's bare name to its labels, in
+	// declaration order — every enum type in the database, not just ones a
+	// column in Tables happens to use. internal/load uses this to
+	// auto-create a missing enum type on a target database; a
+	// USER-DEFINED column whose UDTName isn't a key here is some other
+	// kind of custom type (domain, composite, range) that Tributary
+	// doesn't know how to recreate.
+	Enums map[string][]string `json:"enums,omitempty"`
 }
 
 // Inspect connects to the given Postgres database and walks pg_catalog to
@@ -92,6 +101,11 @@ func InspectConn(ctx context.Context, conn *pgx.Conn) (*Schema, error) {
 		return nil, fmt.Errorf("fetch primary keys: %w", err)
 	}
 
+	enums, err := fetchEnums(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("fetch enum types: %w", err)
+	}
+
 	byTable := make(map[string]*Table, len(tables))
 	for i := range tables {
 		byTable[key(tables[i].Schema, tables[i].Name)] = &tables[i]
@@ -107,7 +121,7 @@ func InspectConn(ctx context.Context, conn *pgx.Conn) (*Schema, error) {
 		}
 	}
 
-	return &Schema{Tables: tables}, nil
+	return &Schema{Tables: tables, Enums: enums}, nil
 }
 
 func key(schema, name string) string {
@@ -173,10 +187,15 @@ func fetchTables(ctx context.Context, conn *pgx.Conn) ([]Table, error) {
 }
 
 // fetchForeignKeys returns every FK constraint pg_catalog knows about,
-// including composite keys — grouped by constraint name and ordered by
-// column position via unnest(conkey, confkey) WITH ORDINALITY, which is the
-// part that's easy to get wrong (a naive join loses the pairing between
-// from-columns and to-columns on multi-column keys).
+// including composite keys — grouped by (from-table, constraint name) and
+// ordered by column position via unnest(conkey, confkey) WITH ORDINALITY.
+// Column pairing is the obvious way to get this wrong (a naive join loses
+// the pairing between from-columns and to-columns on multi-column keys),
+// but grouping is its own trap: a constraint name is only guaranteed
+// unique *within one table* in Postgres, not across the whole database —
+// two different tables can each have, say, "FK_8e39434d2e55c0f2f998e775f09"
+// (common with ORMs that hash-generate constraint names, e.g. TypeORM).
+// Grouping by name alone merges their columns into one bogus ForeignKey.
 func fetchForeignKeys(ctx context.Context, conn *pgx.Conn) ([]ForeignKey, error) {
 	const q = `
 		select
@@ -203,7 +222,7 @@ func fetchForeignKeys(ctx context.Context, conn *pgx.Conn) ([]ForeignKey, error)
 	}
 	defer rows.Close()
 
-	byName := make(map[string]*ForeignKey)
+	byKey := make(map[string]*ForeignKey)
 	var order []string
 
 	for rows.Next() {
@@ -212,11 +231,12 @@ func fetchForeignKeys(ctx context.Context, conn *pgx.Conn) ([]ForeignKey, error)
 		if err := rows.Scan(&name, &fromTable, &fromCol, &toTable, &toCol, &ordinality); err != nil {
 			return nil, err
 		}
-		fk, ok := byName[name]
+		k := fromTable + "\x00" + name // constraint names are only unique per-table
+		fk, ok := byKey[k]
 		if !ok {
 			fk = &ForeignKey{ConstraintName: name, FromTable: fromTable, ToTable: toTable}
-			byName[name] = fk
-			order = append(order, name)
+			byKey[k] = fk
+			order = append(order, k)
 		}
 		fk.FromColumns = append(fk.FromColumns, fromCol)
 		fk.ToColumns = append(fk.ToColumns, toCol)
@@ -226,8 +246,8 @@ func fetchForeignKeys(ctx context.Context, conn *pgx.Conn) ([]ForeignKey, error)
 	}
 
 	fks := make([]ForeignKey, 0, len(order))
-	for _, n := range order {
-		fks = append(fks, *byName[n])
+	for _, k := range order {
+		fks = append(fks, *byKey[k])
 	}
 	return fks, nil
 }
@@ -269,4 +289,39 @@ func fetchPrimaryKeys(ctx context.Context, conn *pgx.Conn) (map[string][]string,
 		return nil, err
 	}
 	return pks, nil
+}
+
+// fetchEnums returns every enum type in the database (not just ones a
+// column happens to reference), keyed by bare type name with labels in
+// declaration order. Matched by name only, not schema — consistent with
+// how a USER-DEFINED column's UDTName is already resolved elsewhere
+// (internal/load), and adequate for the common case of custom types
+// living in a single (usually "public") schema.
+func fetchEnums(ctx context.Context, conn *pgx.Conn) (map[string][]string, error) {
+	const q = `
+		select t.typname, e.enumlabel
+		from pg_type t
+		join pg_enum e on e.enumtypid = t.oid
+		join pg_namespace n on n.oid = t.typnamespace
+		where n.nspname not in ('pg_catalog', 'information_schema')
+		order by t.typname, e.enumsortorder;
+	`
+	rows, err := conn.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	enums := make(map[string][]string)
+	for rows.Next() {
+		var name, label string
+		if err := rows.Scan(&name, &label); err != nil {
+			return nil, err
+		}
+		enums[name] = append(enums[name], label)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return enums, nil
 }

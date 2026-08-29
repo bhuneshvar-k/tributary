@@ -238,9 +238,9 @@ func TestLoad_CompositeFK_CorrectColumnPairing(t *testing.T) {
 	}
 }
 
-// --- row 4: missing custom type on target ---------------------------------
+// --- row 4: missing enum type on target is auto-created --------------------
 
-func TestEnsureSchema_MissingCustomType_ErrorsBeforeCreatingAnything(t *testing.T) {
+func TestEnsureSchema_MissingEnumType_AutoCreated(t *testing.T) {
 	requireContainers(t)
 	ctx := context.Background()
 
@@ -249,12 +249,49 @@ func TestEnsureSchema_MissingCustomType_ErrorsBeforeCreatingAnything(t *testing.
 	sourceSchema := loadSourceSchema(t)
 	_, closure, _ := runClosureAndOrder(t, nil, "public.enum_table", "id = 301")
 
+	report, err := EnsureSchema(ctx, targetConn, sourceSchema, closure, true)
+	if err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	found := false
+	for _, name := range report.TypesCreated {
+		if name == "enum_status" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected enum_status in TypesCreated, got %+v", report.TypesCreated)
+	}
+
+	var status string
+	if err := targetConn.QueryRow(ctx, `SELECT status FROM enum_table WHERE id = 301`).Scan(&status); err != nil {
+		t.Fatalf("query loaded row: %v", err)
+	}
+	if status != "active" {
+		t.Fatalf("enum_table.status = %q, want %q", status, "active")
+	}
+}
+
+// A USER-DEFINED type that isn't an enum (a domain, here) is still a hard,
+// named error — Tributary only auto-creates enum type definitions.
+func TestEnsureSchema_NonEnumCustomType_StillErrors(t *testing.T) {
+	requireContainers(t)
+	ctx := context.Background()
+
+	mustExecSource(t, ctx, `INSERT INTO domain_table (id, amount) VALUES (302, 5)`)
+
+	sourceSchema := loadSourceSchema(t)
+	_, closure, _ := runClosureAndOrder(t, nil, "public.domain_table", "id = 302")
+
 	_, err := EnsureSchema(ctx, targetConn, sourceSchema, closure, true)
 	if err == nil {
-		t.Fatal("expected an error for a column using a custom type not present on target")
+		t.Fatal("expected an error for a column using a non-enum custom type not present on target")
 	}
-	if n := targetRowCount(t, "information_schema.tables", "table_name = 'enum_table'"); n != 0 {
-		t.Fatalf("enum_table should not have been created on target after a failed preflight, count=%d", n)
+	if !strings.Contains(err.Error(), "positive_int") || !strings.Contains(err.Error(), "recognized enum") {
+		t.Fatalf("error %q should name the type and mention it isn't a recognized enum", err.Error())
+	}
+	if n := targetRowCount(t, "information_schema.tables", "table_name = 'domain_table'"); n != 0 {
+		t.Fatalf("domain_table should not have been created on target after a failed preflight, count=%d", n)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 // SchemaReport summarizes what EnsureSchema did.
 type SchemaReport struct {
+	TypesCreated       []string
 	TablesCreated      []graph.NodeID
 	ConstraintsCreated []string
 	Warnings           []string
@@ -38,11 +39,15 @@ type SchemaReport struct {
 //
 // Not replicated, by design (see internal/catalog's doc comment on
 // Column): defaults, sequences/identity, check constraints, indexes beyond
-// the implicit PK index, triggers, views, and custom type *definitions* —
-// a column using a custom type (data_type = "USER-DEFINED", e.g. a
-// Postgres enum) requires that type to already exist on the target by
-// name; EnsureSchema checks for it and fails with a specific, named error
-// rather than letting a raw "type does not exist" DDL error surface.
+// the implicit PK index, triggers, views, and most custom type
+// *definitions*. The one exception is enum types: a column using one
+// (data_type = "USER-DEFINED", sourceSchema.Enums has its labels) gets
+// that type auto-created on target if it's missing, since enums are
+// common and trivially faithful to recreate (CREATE TYPE ... AS ENUM with
+// the same labels in the same order). A domain, composite, or range type —
+// USER-DEFINED but absent from sourceSchema.Enums — still requires the
+// target to already have it; EnsureSchema fails with a specific, named
+// error rather than a raw "type does not exist" DDL error.
 // createMissing controls what happens when a needed table doesn't exist on
 // target: true auto-creates it (the default CLI behavior); false — set via
 // --no-create-schema — fails preflight instead, naming every missing
@@ -101,15 +106,17 @@ func EnsureSchema(ctx context.Context, target *pgx.Conn, sourceSchema *catalog.S
 			len(missing), strings.Join(names, ", "))
 	}
 
-	if err := checkCustomTypesExist(ctx, target, missing); err != nil {
-		return nil, err
-	}
-
 	tx, err := target.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin schema-creation transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op if already committed
+
+	createdTypes, err := ensureCustomTypesExist(ctx, tx, sourceSchema.Enums, missing)
+	if err != nil {
+		return nil, err
+	}
+	report.TypesCreated = createdTypes
 
 	createdSchemas := map[string]bool{}
 	for _, t := range missing {
@@ -174,10 +181,13 @@ func preflightCompatible(target, source catalog.Table) error {
 	return nil
 }
 
-// checkCustomTypesExist fails fast, before creating anything, if any
-// column in tables uses a custom type (enum/domain/composite) not already
-// present on target by name — EnsureSchema never creates type definitions.
-func checkCustomTypesExist(ctx context.Context, target *pgx.Conn, tables []catalog.Table) error {
+// ensureCustomTypesExist checks every USER-DEFINED column in tables
+// against target: a missing type that's a known enum (present in
+// sourceEnums) is created (CREATE TYPE ... AS ENUM, same labels, same
+// order) and its name returned in created; a missing type that isn't a
+// known enum — a domain, composite, or range — is a hard, named error,
+// since Tributary doesn't know how to recreate those faithfully.
+func ensureCustomTypesExist(ctx context.Context, tx pgx.Tx, sourceEnums map[string][]string, tables []catalog.Table) (created []string, err error) {
 	checked := map[string]bool{}
 	for _, t := range tables {
 		for _, c := range t.Columns {
@@ -187,18 +197,35 @@ func checkCustomTypesExist(ctx context.Context, target *pgx.Conn, tables []catal
 			checked[c.UDTName] = true
 
 			var exists bool
-			err := target.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = $1)`, c.UDTName).Scan(&exists)
-			if err != nil {
-				return fmt.Errorf("check custom type %q on target: %w", c.UDTName, err)
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = $1)`, c.UDTName).Scan(&exists); err != nil {
+				return created, fmt.Errorf("check custom type %q on target: %w", c.UDTName, err)
 			}
-			if !exists {
-				return fmt.Errorf(
-					"column %s.%s uses type %q, which does not exist on the target — create it before running sync (Tributary does not create custom type definitions)",
+			if exists {
+				continue
+			}
+
+			labels, isEnum := sourceEnums[c.UDTName]
+			if !isEnum {
+				return created, fmt.Errorf(
+					"column %s.%s uses type %q, which does not exist on the target and isn't a recognized enum — create it before running sync (Tributary auto-creates missing enum types, but not domains/composites/ranges)",
 					graph.NodeID(t.Schema+"."+t.Name), c.Name, c.UDTName)
 			}
+
+			if _, err := tx.Exec(ctx, createEnumTypeSQL(c.UDTName, labels)); err != nil {
+				return created, fmt.Errorf("create enum type %q on target: %w", c.UDTName, err)
+			}
+			created = append(created, c.UDTName)
 		}
 	}
-	return nil
+	return created, nil
+}
+
+func createEnumTypeSQL(name string, labels []string) string {
+	quoted := make([]string, len(labels))
+	for i, l := range labels {
+		quoted[i] = "'" + strings.ReplaceAll(l, "'", "''") + "'"
+	}
+	return fmt.Sprintf("CREATE TYPE %s AS ENUM (%s)", quotedIdent(name), strings.Join(quoted, ", "))
 }
 
 func createTableSQL(t catalog.Table) string {
@@ -238,7 +265,7 @@ func addForeignKeySQL(fk catalog.ForeignKey) string {
 // scale where Postgres's information_schema.columns.data_type strips it
 // (e.g. "character varying" alone, without the (n)) — see internal/catalog
 // Column's doc comment. A USER-DEFINED column renders as its underlying
-// type name (checkCustomTypesExist has already confirmed it exists on
+// type name (ensureCustomTypesExist has already confirmed or created it on
 // target by the time this is called).
 func columnTypeSQL(c catalog.Column) string {
 	switch c.Type {

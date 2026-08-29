@@ -77,13 +77,24 @@ CREATE TABLE poly_source_table (
     target_id   int NOT NULL
 );
 
--- Custom type, present on source but deliberately NOT created on target —
--- the missing-custom-type preflight case.
+-- Enum type, present on source but deliberately NOT created on target —
+-- EnsureSchema auto-creates missing enum types, so loading this table
+-- should succeed (see TestEnsureSchema_MissingEnumType_AutoCreated).
 CREATE TYPE enum_status AS ENUM ('active', 'inactive');
 
 CREATE TABLE enum_table (
     id     int PRIMARY KEY,
     status enum_status NOT NULL
+);
+
+-- Domain type: also USER-DEFINED, but not an enum — Tributary doesn't
+-- know how to recreate a domain faithfully (its CHECK constraint), so
+-- this is the case that's still a hard preflight error.
+CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0);
+
+CREATE TABLE domain_table (
+    id     int PRIMARY KEY,
+    amount positive_int NOT NULL
 );
 
 -- A real FK, with one row's reference deliberately left dangling (trigger
