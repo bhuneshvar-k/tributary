@@ -29,8 +29,8 @@ sources.
 
 | # | Phase | Status |
 |---|-------|--------|
-| 0 | Repo & schema introspection (`tributary inspect`) | in progress |
-| 1 | FK graph & subset closure, incl. declared relations | not started |
+| 0 | Repo & schema introspection (`tributary inspect`) | done |
+| 1 | FK graph & subset closure, incl. declared relations (`tributary plan`) | done |
 | 2 | One-shot export + load (usable MVP) | not started |
 | 3 | Masking & transform pipeline | not started |
 | 4 | Incremental sync via logical replication | not started |

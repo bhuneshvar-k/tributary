@@ -28,11 +28,13 @@ type ForeignKey struct {
 	ToColumns      []string `json:"to_columns"`
 }
 
-// Table describes a single table: its columns and any outgoing foreign keys.
+// Table describes a single table: its columns, primary key, and any
+// outgoing foreign keys.
 type Table struct {
 	Schema      string       `json:"schema"`
 	Name        string       `json:"name"`
 	Columns     []Column     `json:"columns"`
+	PrimaryKey  []string     `json:"primary_key,omitempty"`
 	ForeignKeys []ForeignKey `json:"foreign_keys"`
 }
 
@@ -66,6 +68,11 @@ func Inspect(ctx context.Context, connString string) (*Schema, error) {
 		return nil, fmt.Errorf("fetch foreign keys: %w", err)
 	}
 
+	pks, err := fetchPrimaryKeys(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("fetch primary keys: %w", err)
+	}
+
 	byTable := make(map[string]*Table, len(tables))
 	for i := range tables {
 		byTable[key(tables[i].Schema, tables[i].Name)] = &tables[i]
@@ -73,6 +80,11 @@ func Inspect(ctx context.Context, connString string) (*Schema, error) {
 	for _, fk := range fks {
 		if t, ok := byTable[fk.FromTable]; ok {
 			t.ForeignKeys = append(t.ForeignKeys, fk)
+		}
+	}
+	for table, columns := range pks {
+		if t, ok := byTable[table]; ok {
+			t.PrimaryKey = columns
 		}
 	}
 
@@ -188,4 +200,43 @@ func fetchForeignKeys(ctx context.Context, conn *pgx.Conn) ([]ForeignKey, error)
 		fks = append(fks, *byName[n])
 	}
 	return fks, nil
+}
+
+// fetchPrimaryKeys returns each table's primary key columns, in
+// declaration order, keyed by the same "schema.table" string fetchTables
+// and fetchForeignKeys use. Tables with no primary key are simply absent
+// from the result.
+func fetchPrimaryKeys(ctx context.Context, conn *pgx.Conn) (map[string][]string, error) {
+	const q = `
+		select
+			nsp.nspname || '.' || rel.relname as table_name,
+			att.attname as column_name,
+			ord.ordinality
+		from pg_constraint con
+		join pg_class rel on rel.oid = con.conrelid
+		join pg_namespace nsp on nsp.oid = rel.relnamespace
+		join lateral unnest(con.conkey) with ordinality as ord(attnum, ordinality) on true
+		join pg_attribute att on att.attrelid = con.conrelid and att.attnum = ord.attnum
+		where con.contype = 'p'
+		order by table_name, ord.ordinality;
+	`
+	rows, err := conn.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	pks := make(map[string][]string)
+	for rows.Next() {
+		var table, column string
+		var ordinality int
+		if err := rows.Scan(&table, &column, &ordinality); err != nil {
+			return nil, err
+		}
+		pks[table] = append(pks[table], column)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return pks, nil
 }

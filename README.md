@@ -17,22 +17,45 @@ register): see [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Status
 
-Phase 0 — schema introspection. `tributary inspect` connects to a Postgres
-database and prints its schema graph (tables, columns, foreign keys) as
-JSON. Nothing else is implemented yet.
+Phase 1 — FK graph & subset closure. `tributary inspect` prints the schema
+graph as JSON (phase 0). `tributary plan` computes a referentially-
+consistent subset from a seed table + predicate — merging real `pg_catalog`
+foreign keys with a declared `tributary.schema.yaml` (soft FKs, composite
+keys, polymorphic associations, ignores, and `dependency_breaks` for
+self-referencing/cyclic tables) — and prints a row-count-per-table report.
+Nothing moves data yet; that's phase 2.
 
 ## Getting started
 
 ```sh
-# requires Go 1.22+ — brew install go
-go mod tidy    # resolves the pinned pgx version to the current release
+# requires Go 1.25+ (pinned transitively by pgx v5.9+) — brew install go
+go mod tidy
 make build
-TRIBUTARY_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable" \
-  ./bin/tributary inspect
+
+TRIBUTARY_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+
+./bin/tributary inspect
+
+./bin/tributary plan \
+  --seed-table users --seed-predicate "id = 42" \
+  --schema-file tributary.schema.example.yaml
 ```
 
+`--seed-predicate` is a raw SQL `WHERE`-clause fragment, interpolated
+directly — tributary is an admin CLI, not a web input path, so it is not
+sanitized against injection.
+
 See [`tributary.schema.example.yaml`](tributary.schema.example.yaml) for
-what the (not-yet-implemented) declared-relations file will look like.
+the declared-relations file shape: soft FKs, composite keys, polymorphic
+associations, ignores, and `dependency_breaks`.
+
+### Testing
+
+`go test ./...` runs the unit suite everywhere. `internal/graph`'s closure
+tests additionally need Docker (they spin up real Postgres via
+`testcontainers-go` — subset/replication correctness isn't trusted to
+mocks) and skip themselves cleanly with a clear message if no Docker
+daemon is reachable.
 
 ## License
 
