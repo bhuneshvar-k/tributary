@@ -1,0 +1,28 @@
+# Example tributary.schema.yaml
+#
+# Declares relationships pg_catalog can't see: soft FKs (no DB constraint —
+# common in Rails apps that skip add_foreign_key), composite keys, and
+# polymorphic associations (target table depends on a type column). Also
+# the place to suppress a real FK the resolver shouldn't follow.
+#
+# Merged with catalog-discovered edges in internal/graph (phase 1).
+
+relations:
+  # soft FK — no DB constraint
+  - from: orders.user_id
+    to: users.id
+
+  # composite key
+  - from: [line_items.order_id, line_items.tenant_id]
+    to: [orders.id, orders.tenant_id]
+
+  # polymorphic association — target depends on a type column
+  - from: comments.commentable_id
+    polymorphic_type: comments.commentable_type
+    targets:
+      Post: posts.id
+      Photo: photos.id
+
+  # suppress a real FK the resolver shouldn't follow (e.g. a
+  # self-referencing audit table that would otherwise explode the subset)
+  - ignore: audit_logs.actor_id
