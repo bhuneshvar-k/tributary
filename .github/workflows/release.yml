@@ -50,3 +50,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_TOKEN_BREW: ${{ secrets.TAP_GITHUB_TOKEN }}
