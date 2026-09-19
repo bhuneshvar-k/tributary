@@ -30,6 +30,12 @@ func TestSaveAndLoad(t *testing.T) {
 		SeedTable:     "users",
 		SeedPredicate: "id = 1",
 		SchemaFile:    "./tributary.schema.yaml",
+		AI: AIConfig{
+			Provider: "claude",
+			APIKey:   "sk-ant-test-key",
+			Model:    "claude-sonnet-4-20250514",
+			BaseURL:  "https://custom.api.com",
+		},
 	}
 
 	if err := Save(original); err != nil {
@@ -58,6 +64,18 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if loaded.SchemaFile != original.SchemaFile {
 		t.Errorf("SchemaFile: got %q, want %q", loaded.SchemaFile, original.SchemaFile)
+	}
+	if loaded.AI.Provider != original.AI.Provider {
+		t.Errorf("AI.Provider: got %q, want %q", loaded.AI.Provider, original.AI.Provider)
+	}
+	if loaded.AI.APIKey != original.AI.APIKey {
+		t.Errorf("AI.APIKey: got %q, want %q", loaded.AI.APIKey, original.AI.APIKey)
+	}
+	if loaded.AI.Model != original.AI.Model {
+		t.Errorf("AI.Model: got %q, want %q", loaded.AI.Model, original.AI.Model)
+	}
+	if loaded.AI.BaseURL != original.AI.BaseURL {
+		t.Errorf("AI.BaseURL: got %q, want %q", loaded.AI.BaseURL, original.AI.BaseURL)
 	}
 }
 
@@ -135,6 +153,55 @@ func TestSet_UnknownKey(t *testing.T) {
 	}
 }
 
+func TestAIConfig_GetSet(t *testing.T) {
+	cfg := &UserConfig{}
+
+	if err := Set(cfg, "ai.provider", "claude"); err != nil {
+		t.Fatalf("Set(ai.provider): %v", err)
+	}
+	if got := Get(cfg, "ai.provider"); got != "claude" {
+		t.Errorf("Get(ai.provider): got %q, want %q", got, "claude")
+	}
+
+	if err := Set(cfg, "ai.api_key", "sk-ant-test"); err != nil {
+		t.Fatalf("Set(ai.api_key): %v", err)
+	}
+	if got := Get(cfg, "ai.api_key"); got != "sk-ant-test" {
+		t.Errorf("Get(ai.api_key): got %q, want %q", got, "sk-ant-test")
+	}
+
+	if err := Set(cfg, "ai.model", "claude-sonnet-4-20250514"); err != nil {
+		t.Fatalf("Set(ai.model): %v", err)
+	}
+	if got := Get(cfg, "ai.model"); got != "claude-sonnet-4-20250514" {
+		t.Errorf("Get(ai.model): got %q, want %q", got, "claude-sonnet-4-20250514")
+	}
+
+	if err := Set(cfg, "ai.base_url", "https://custom.api.com"); err != nil {
+		t.Fatalf("Set(ai.base_url): %v", err)
+	}
+	if got := Get(cfg, "ai.base_url"); got != "https://custom.api.com" {
+		t.Errorf("Get(ai.base_url): got %q, want %q", got, "https://custom.api.com")
+	}
+}
+
+func TestAIConfig_Unset(t *testing.T) {
+	cfg := &UserConfig{}
+	_ = Set(cfg, "ai.provider", "claude")
+	_ = Set(cfg, "ai.api_key", "sk-ant-test")
+
+	if err := Unset(cfg, "ai.api_key"); err != nil {
+		t.Fatalf("Unset(ai.api_key): %v", err)
+	}
+	if got := Get(cfg, "ai.api_key"); got != "" {
+		t.Errorf("Get(ai.api_key) after Unset: got %q, want empty", got)
+	}
+	// Provider should still be set.
+	if got := Get(cfg, "ai.provider"); got != "claude" {
+		t.Errorf("Get(ai.provider) after Unset(ai.api_key): got %q, want %q", got, "claude")
+	}
+}
+
 func TestUnset(t *testing.T) {
 	cfg := &UserConfig{DSN: "postgres://localhost/test"}
 	if err := Unset(cfg, "dsn"); err != nil {
@@ -170,8 +237,8 @@ func TestPath(t *testing.T) {
 
 func TestKeys(t *testing.T) {
 	keys := Keys()
-	if len(keys) != 6 {
-		t.Errorf("Keys(): got %d keys, want 6", len(keys))
+	if len(keys) != 10 {
+		t.Errorf("Keys(): got %d keys, want 10", len(keys))
 	}
 }
 
@@ -179,6 +246,16 @@ func TestKeyDescription(t *testing.T) {
 	desc := KeyDescription("dsn")
 	if desc == "" {
 		t.Error("KeyDescription(dsn) returned empty string")
+	}
+
+	desc = KeyDescription("ai.provider")
+	if desc == "" {
+		t.Error("KeyDescription(ai.provider) returned empty string")
+	}
+
+	desc = KeyDescription("ai.api_key")
+	if desc == "" {
+		t.Error("KeyDescription(ai.api_key) returned empty string")
 	}
 
 	desc = KeyDescription("unknown")

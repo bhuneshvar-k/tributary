@@ -42,6 +42,27 @@ type UserConfig struct {
 	// SchemaFile is the default path to a tributary.schema.yaml file.
 	// Corresponds to --schema-file.
 	SchemaFile string `yaml:"schema_file,omitempty"`
+
+	// AI holds configuration for the natural-language AI interface.
+	AI AIConfig `yaml:"ai,omitempty"`
+}
+
+// AIConfig holds the persisted AI settings.
+type AIConfig struct {
+	// Provider is the AI backend: "claude", "openai", "gemini",
+	// "openrouter", or "opencode".
+	Provider string `yaml:"provider,omitempty"`
+
+	// APIKey is the authentication token for the provider.
+	// Stored with 0o600 permissions, same as DSN passwords.
+	APIKey string `yaml:"api_key,omitempty"`
+
+	// Model overrides the provider's default model. Empty = provider default.
+	Model string `yaml:"model,omitempty"`
+
+	// BaseURL overrides the provider's API endpoint. Empty = default.
+	// Useful for proxies, self-hosted, or OpenAI-compatible providers.
+	BaseURL string `yaml:"base_url,omitempty"`
 }
 
 // Dir returns the tributary config directory (~/.tributary), creating
@@ -113,7 +134,7 @@ func Save(cfg *UserConfig) error {
 }
 
 // Get retrieves a config value by dot-separated key path (e.g. "dsn",
-// "seed_table"). Returns an empty string if the key is not set.
+// "seed_table", "ai.provider"). Returns an empty string if the key is not set.
 func Get(cfg *UserConfig, key string) string {
 	switch strings.ToLower(key) {
 	case "dsn":
@@ -128,6 +149,14 @@ func Get(cfg *UserConfig, key string) string {
 		return cfg.SeedPredicate
 	case "schema_file":
 		return cfg.SchemaFile
+	case "ai.provider":
+		return cfg.AI.Provider
+	case "ai.api_key":
+		return cfg.AI.APIKey
+	case "ai.model":
+		return cfg.AI.Model
+	case "ai.base_url":
+		return cfg.AI.BaseURL
 	default:
 		return ""
 	}
@@ -148,8 +177,16 @@ func Set(cfg *UserConfig, key, value string) error {
 		cfg.SeedPredicate = value
 	case "schema_file":
 		cfg.SchemaFile = value
+	case "ai.provider":
+		cfg.AI.Provider = value
+	case "ai.api_key":
+		cfg.AI.APIKey = value
+	case "ai.model":
+		cfg.AI.Model = value
+	case "ai.base_url":
+		cfg.AI.BaseURL = value
 	default:
-		return fmt.Errorf("unknown config key %q (valid keys: dsn, source_dsn, target_dsn, seed_table, seed_predicate, schema_file)", key)
+		return fmt.Errorf("unknown config key %q (valid keys: dsn, source_dsn, target_dsn, seed_table, seed_predicate, schema_file, ai.provider, ai.api_key, ai.model, ai.base_url)", key)
 	}
 	return nil
 }
@@ -168,6 +205,10 @@ func Keys() []string {
 		"seed_table",
 		"seed_predicate",
 		"schema_file",
+		"ai.provider",
+		"ai.api_key",
+		"ai.model",
+		"ai.base_url",
 	}
 }
 
@@ -186,6 +227,14 @@ func KeyDescription(key string) string {
 		return "Default seed predicate (raw SQL WHERE fragment)"
 	case "schema_file":
 		return "Default path to tributary.schema.yaml"
+	case "ai.provider":
+		return "AI provider: claude, openai, gemini, openrouter, or opencode"
+	case "ai.api_key":
+		return "API key for the AI provider (stored with 0600 permissions)"
+	case "ai.model":
+		return "AI model override (empty = provider default)"
+	case "ai.base_url":
+		return "Custom AI API endpoint (empty = provider default)"
 	default:
 		return ""
 	}
