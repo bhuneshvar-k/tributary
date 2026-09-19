@@ -20,6 +20,7 @@ import (
 	"github.com/bhuneshvar-k/tributary/internal/state"
 	"github.com/bhuneshvar-k/tributary/internal/subset"
 	"github.com/bhuneshvar-k/tributary/pkg/config"
+	"github.com/bhuneshvar-k/tributary/pkg/userconfig"
 )
 
 func newSyncCmd() *cobra.Command {
@@ -73,14 +74,35 @@ reached (the seed's whole company, not just the seed).`,
 			if targetDSN == "" {
 				targetDSN = os.Getenv("TRIBUTARY_TARGET_DSN")
 			}
+			if sourceDSN == "" || targetDSN == "" || seedTable == "" || seedPredicate == "" {
+				if userCfg, err := userconfig.Load(); err == nil {
+					if sourceDSN == "" {
+						sourceDSN = userCfg.SourceDSN
+					}
+					if targetDSN == "" {
+						targetDSN = userCfg.TargetDSN
+					}
+					if seedTable == "" {
+						seedTable = userCfg.SeedTable
+					}
+					if seedPredicate == "" {
+						seedPredicate = userCfg.SeedPredicate
+					}
+				}
+			}
 			if sourceDSN == "" {
-				return fmt.Errorf("--source-dsn is required (or set TRIBUTARY_SOURCE_DSN)")
+				return fmt.Errorf("--source-dsn is required (or set TRIBUTARY_SOURCE_DSN, or use 'tributary config set source_dsn <dsn>')")
 			}
 			if targetDSN == "" {
-				return fmt.Errorf("--target-dsn is required (or set TRIBUTARY_TARGET_DSN)")
+				return fmt.Errorf("--target-dsn is required (or set TRIBUTARY_TARGET_DSN, or use 'tributary config set target_dsn <dsn>')")
 			}
 			if seedTable == "" || seedPredicate == "" {
-				return fmt.Errorf("--seed-table and --seed-predicate are required")
+				return fmt.Errorf("--seed-table and --seed-predicate are required (or set via 'tributary config set')")
+			}
+			if schemaFilePath == "" {
+				if userCfg, err := userconfig.Load(); err == nil && userCfg.SchemaFile != "" {
+					schemaFilePath = userCfg.SchemaFile
+				}
 			}
 
 			return runSyncRun(syncRunOptions{

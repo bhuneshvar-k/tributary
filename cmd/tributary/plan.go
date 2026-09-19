@@ -15,6 +15,7 @@ import (
 	"github.com/bhuneshvar-k/tributary/internal/graph"
 	"github.com/bhuneshvar-k/tributary/internal/subset"
 	"github.com/bhuneshvar-k/tributary/pkg/config"
+	"github.com/bhuneshvar-k/tributary/pkg/userconfig"
 )
 
 func newPlanCmd() *cobra.Command {
@@ -48,10 +49,30 @@ reached (the seed's whole company, not just the seed).`,
 				dsn = os.Getenv("TRIBUTARY_DSN")
 			}
 			if dsn == "" {
-				return fmt.Errorf("--dsn is required (or set TRIBUTARY_DSN)")
+				if userCfg, err := userconfig.Load(); err == nil {
+					dsn = userCfg.DSN
+				}
+			}
+			if dsn == "" {
+				return fmt.Errorf("--dsn is required (or set TRIBUTARY_DSN, or use 'tributary config set dsn <dsn>')")
+			}
+			if seedTable == "" {
+				if userCfg, err := userconfig.Load(); err == nil && userCfg.SeedTable != "" {
+					seedTable = userCfg.SeedTable
+				}
+			}
+			if seedPredicate == "" {
+				if userCfg, err := userconfig.Load(); err == nil && userCfg.SeedPredicate != "" {
+					seedPredicate = userCfg.SeedPredicate
+				}
 			}
 			if seedTable == "" || seedPredicate == "" {
-				return fmt.Errorf("--seed-table and --seed-predicate are required")
+				return fmt.Errorf("--seed-table and --seed-predicate are required (or set via 'tributary config set')")
+			}
+			if schemaFilePath == "" {
+				if userCfg, err := userconfig.Load(); err == nil && userCfg.SchemaFile != "" {
+					schemaFilePath = userCfg.SchemaFile
+				}
 			}
 
 			ctx := context.Background()

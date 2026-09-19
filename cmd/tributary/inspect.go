@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bhuneshvar-k/tributary/internal/catalog"
+	"github.com/bhuneshvar-k/tributary/pkg/userconfig"
 )
 
 func newInspectCmd() *cobra.Command {
@@ -22,7 +23,12 @@ func newInspectCmd() *cobra.Command {
 				dsn = os.Getenv("TRIBUTARY_DSN")
 			}
 			if dsn == "" {
-				return fmt.Errorf("--dsn is required (or set TRIBUTARY_DSN)")
+				if userCfg, err := userconfig.Load(); err == nil {
+					dsn = userCfg.DSN
+				}
+			}
+			if dsn == "" {
+				return fmt.Errorf("--dsn is required (or set TRIBUTARY_DSN, or use 'tributary config set dsn <dsn>')")
 			}
 
 			schema, err := catalog.Inspect(context.Background(), dsn)
