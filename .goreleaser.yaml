@@ -1,0 +1,74 @@
+version: 2
+
+project_name: tributary
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - main: ./cmd/tributary
+    binary: tributary
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/bhuneshvar-k/tributary/internal/version.version={{.Version}}
+      - -X github.com/bhuneshvar-k/tributary/internal/version.commit={{.Commit}}
+      - -X github.com/bhuneshvar-k/tributary/internal/version.date={{.Date}}
+      - -X github.com/bhuneshvar-k/tributary/internal/version.builtBy=goreleaser
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: bhuneshvar-k
+    name: tributary
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+
+# Homebrew tap (will be configured when we set up Ticket 7)
+# brews:
+#   - repository:
+#       owner: bhuneshvar-k
+#       name: homebrew-tap
+#     homepage: "https://github.com/bhuneshvar-k/tributary"
+#     description: "Postgres subsetting & sync CLI"
+#     license: "MIT"
+#     install: |
+#       bin.install "tributary"
+#     test: |
+#       system "#{bin}/tributary", "--version"

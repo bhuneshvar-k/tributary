@@ -1,5 +1,8 @@
 /bin/
+/dist/
+/tributary
 *.log
 .env
 .DS_Store
 /.tributary/
+.tributary/wayfinder/
