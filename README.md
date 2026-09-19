@@ -31,8 +31,11 @@ Tributary walks real foreign keys plus user-declared relationships, computes the
 
 ```sh
 brew tap bhuneshvar-k/tap
+brew trust bhuneshvar-k/tap
 brew install tributary
 ```
+
+> **Note:** `brew trust` is required once per machine for third-party taps. After that, `brew upgrade tributary` works automatically.
 
 ### curl Installer (macOS/Linux)
 
