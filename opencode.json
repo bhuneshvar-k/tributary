@@ -4,6 +4,12 @@
       "Mintlify": {
         "type": "remote",
         "url": "https://mcp.mintlify.com"
+      },
+      "tributary": {
+        "type": "local",
+        "command": [
+          "tributary", "mcp"
+        ]
       }
     }
   }

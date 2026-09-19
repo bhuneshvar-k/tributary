@@ -92,7 +92,7 @@ Tributary ships with an MCP (Model Context Protocol) server that lets AI assista
 
 ### Setup
 
-The MCP server binary `tributary-mcp-server` is included in every release.
+Once Tributary is installed, the MCP server is built-in — no extra binary needed.
 
 **OpenCode** — add to `opencode.json`:
 ```json
@@ -100,7 +100,7 @@ The MCP server binary `tributary-mcp-server` is included in every release.
   "mcp": {
     "servers": {
       "tributary": {
-        "command": ["tributary-mcp-server"]
+        "command": ["tributary", "mcp"]
       }
     }
   }
@@ -112,7 +112,7 @@ The MCP server binary `tributary-mcp-server` is included in every release.
 {
   "mcpServers": {
     "tributary": {
-      "command": "tributary-mcp-server"
+      "command": ["tributary", "mcp"]
     }
   }
 }
@@ -123,7 +123,7 @@ The MCP server binary `tributary-mcp-server` is included in every release.
 {
   "mcpServers": {
     "tributary": {
-      "command": "tributary-mcp-server"
+      "command": ["tributary", "mcp"]
     }
   }
 }
