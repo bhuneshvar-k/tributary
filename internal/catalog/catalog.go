@@ -134,10 +134,17 @@ func key(schema, name string) string {
 // internal/load can generate a faithful column type (e.g. "varchar(50)",
 // "numeric(10,2)") rather than an unbounded/unconstrained one when
 // auto-creating a target table.
+//
+// PostgreSQL's information_schema.columns reports domain columns with
+// data_type = the underlying type (e.g. "integer"), not "USER-DEFINED".
+// The domain_name column is the only way to detect domains. When present,
+// we normalize the column to Type = "USER-DEFINED" and UDTName = the
+// domain name so ensureCustomTypesExist can detect and handle them.
 func fetchTables(ctx context.Context, conn *pgx.Conn) ([]Table, error) {
 	const q = `
 		select table_schema, table_name, column_name, data_type, is_nullable,
-			character_maximum_length, numeric_precision, numeric_scale, udt_name
+			character_maximum_length, numeric_precision, numeric_scale, udt_name,
+			domain_name
 		from information_schema.columns
 		where table_schema not in ('pg_catalog', 'information_schema')
 		order by table_schema, table_name, ordinal_position;
@@ -154,9 +161,20 @@ func fetchTables(ctx context.Context, conn *pgx.Conn) ([]Table, error) {
 	for rows.Next() {
 		var schema, table, column, dataType, nullable, udtName string
 		var charMaxLength, numericPrecision, numericScale *int
+		var domainName *string
 		if err := rows.Scan(&schema, &table, &column, &dataType, &nullable,
-			&charMaxLength, &numericPrecision, &numericScale, &udtName); err != nil {
+			&charMaxLength, &numericPrecision, &numericScale, &udtName,
+			&domainName); err != nil {
 			return nil, err
+		}
+		// Domains: PostgreSQL reports their underlying type (e.g.
+		// "integer") rather than "USER-DEFINED", but the domain_name
+		// column is non-null. Normalize so the rest of the codebase
+		// (ensureCustomTypesExist, columnTypeSQL) treats them like any
+		// other USER-DEFINED type.
+		if domainName != nil {
+			dataType = "USER-DEFINED"
+			udtName = *domainName
 		}
 		k := key(schema, table)
 		t, ok := byTable[k]
