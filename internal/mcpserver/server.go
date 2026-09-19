@@ -39,36 +39,36 @@ func NewServer() *mcp.Server {
 type VersionInput = map[string]any
 
 type InspectSchemaInput struct {
-	DSN string `json:"dsn" jsonschema:"description=Postgres connection string (e.g. postgres://user:pass@host:5432/dbname?sslmode=disable)"`
+	DSN string `json:"dsn"`
 }
 
 type ListTablesInput struct {
-	DSN string `json:"dsn" jsonschema:"description=Postgres connection string"`
+	DSN string `json:"dsn"`
 }
 
 type CheckConnectionInput struct {
-	DSN string `json:"dsn" jsonschema:"description=Postgres connection string"`
+	DSN string `json:"dsn"`
 }
 
 type ValidateConfigInput struct {
-	ConfigFile string `json:"config_file" jsonschema:"description=Path to the tributary schema YAML file"`
+	ConfigFile string `json:"config_file"`
 }
 
 type SubsetPreviewInput struct {
-	DSN            string `json:"dsn" jsonschema:"description=Postgres connection string for the SOURCE database"`
-	SeedTable      string `json:"seed_table" jsonschema:"description=Fully qualified seed table (e.g. public.users)"`
-	SeedPredicate  string `json:"seed_predicate" jsonschema:"description=SQL WHERE clause without WHERE keyword (e.g. \"email = 'admin@example.com'\")"`
-	ConfigFile     string `json:"config_file,omitempty" jsonschema:"description=Optional path to a tributary schema file"`
+	DSN           string `json:"dsn"`
+	SeedTable     string `json:"seed_table"`
+	SeedPredicate string `json:"seed_predicate"`
+	ConfigFile    string `json:"config_file,omitempty"`
 }
 
 type SubsetSyncInput struct {
-	SourceDSN      string `json:"source_dsn" jsonschema:"description=Postgres connection string for the SOURCE database"`
-	TargetDSN      string `json:"target_dsn" jsonschema:"description=Postgres connection string for the TARGET database"`
-	SeedTable      string `json:"seed_table" jsonschema:"description=Fully qualified seed table (e.g. public.users)"`
-	SeedPredicate  string `json:"seed_predicate" jsonschema:"description=SQL WHERE clause without WHERE keyword (e.g. \"email = 'admin@example.com'\")"`
-	Fresh          bool   `json:"fresh,omitempty" jsonschema:"description=Delete existing subset rows from target before reload (default: false)"`
-	ConfigFile     string `json:"config_file,omitempty" jsonschema:"description=Optional path to a tributary schema file"`
-	BatchSize      int    `json:"batch_size,omitempty" jsonschema:"description=Rows per batch for backfill/delete (default: 500)"`
+	SourceDSN     string `json:"source_dsn"`
+	TargetDSN     string `json:"target_dsn"`
+	SeedTable     string `json:"seed_table"`
+	SeedPredicate string `json:"seed_predicate"`
+	Fresh         bool   `json:"fresh,omitempty"`
+	ConfigFile    string `json:"config_file,omitempty"`
+	BatchSize     int    `json:"batch_size,omitempty"`
 }
 
 // ── Tool registration ────────────────────────────────────────────
