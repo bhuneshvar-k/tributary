@@ -74,6 +74,73 @@ make build
 
 ## 🚀 Quick Start
 
+## 🤖 MCP Server (AI Integration)
+
+Tributary ships with an MCP (Model Context Protocol) server that lets AI assistants inspect databases, preview subsets, and run syncs directly — no CLI shelling required.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `tributary_version` | Get version, commit, and build date |
+| `tributary_check_connection` | Test database connectivity and get server version |
+| `tributary_inspect_schema` | Inspect full schema: tables, columns, types, keys, FKs |
+| `tributary_list_tables` | Quick table overview with column counts and PKs |
+| `tributary_validate_config` | Validate a tributary schema YAML file |
+| `tributary_subset_preview` | Preview which tables/rows would be synced (dry run) |
+| `tributary_subset_sync` | Run a full subset sync from source to target |
+
+### Setup
+
+The MCP server binary `tributary-mcp-server` is included in every release.
+
+**OpenCode** — add to `opencode.json`:
+```json
+{
+  "mcp": {
+    "servers": {
+      "tributary": {
+        "command": ["tributary-mcp-server"]
+      }
+    }
+  }
+}
+```
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "tributary": {
+      "command": "tributary-mcp-server"
+    }
+  }
+}
+```
+
+**Cursor / Windsurf** — add to your MCP config:
+```json
+{
+  "mcpServers": {
+    "tributary": {
+      "command": "tributary-mcp-server"
+    }
+  }
+}
+```
+
+### Example: AI-Driven Subset Workflow
+
+With the MCP server connected, you can ask your AI assistant:
+
+> "Inspect my production database at postgres://prod:5432/app, preview the subset for user id=42, then sync it to my dev database at postgres://localhost:5432/dev"
+
+The AI will call the MCP tools in sequence — no manual CLI needed.
+
+---
+
+## 🚀 Quick Start (CLI)
+
 ### 1. Inspect Your Schema
 
 ```sh

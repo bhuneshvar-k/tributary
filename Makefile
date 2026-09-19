@@ -1,4 +1,4 @@
-.PHONY: build run tidy test clean dev snapshot release
+.PHONY: build build-mcp build-all run tidy test clean dev snapshot release
 
 # Version information - override with: make build VERSION=v1.0.0
 VERSION ?= dev
@@ -16,13 +16,22 @@ LDFLAGS := -X github.com/bhuneshvar-k/tributary/internal/version.version=$(VERSI
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/tributary ./cmd/tributary
 
+# Build MCP server
+build-mcp:
+	go build -o bin/tributary-mcp-server ./cmd/mcp-server
+
+# Build both binaries
+build-all: build build-mcp
+
 # Build for release (strips debug info for smaller binary)
 build-release:
 	CGO_ENABLED=0 go build -ldflags "-s -w $(LDFLAGS)" -o bin/tributary ./cmd/tributary
+	CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/tributary-mcp-server ./cmd/mcp-server
 
 # Development build with debug info (no ldflags)
 dev:
 	go build -o bin/tributary ./cmd/tributary
+	go build -o bin/tributary-mcp-server ./cmd/mcp-server
 
 run: build
 	./bin/tributary

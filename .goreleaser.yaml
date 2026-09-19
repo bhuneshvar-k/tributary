@@ -26,6 +26,20 @@ builds:
       - -X github.com/bhuneshvar-k/tributary/internal/version.date={{.Date}}
       - -X github.com/bhuneshvar-k/tributary/internal/version.builtBy=goreleaser
 
+  - main: ./cmd/mcp-server
+    binary: tributary-mcp-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
 archives:
   - formats: [tar.gz]
     name_template: >-
