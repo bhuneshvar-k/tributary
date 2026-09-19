@@ -266,9 +266,17 @@ func addForeignKeySQL(fk catalog.ForeignKey) string {
 // (e.g. "character varying" alone, without the (n)) — see internal/catalog
 // Column's doc comment. A USER-DEFINED column renders as its underlying
 // type name (ensureCustomTypesExist has already confirmed or created it on
-// target by the time this is called).
+// target by the time this is called). ARRAY columns (data_type = "ARRAY",
+// udt_name = "_int4" etc.) render as the element type with "[]" appended.
 func columnTypeSQL(c catalog.Column) string {
 	switch c.Type {
+	case "ARRAY":
+		// udt_name is "_int4", "_text", etc. — strip the leading "_"
+		// and append "[]" to produce valid DDL like "int4[]", "text[]".
+		if strings.HasPrefix(c.UDTName, "_") {
+			return c.UDTName[1:] + "[]"
+		}
+		return c.UDTName + "[]"
 	case "character varying", "character", "varbit", "bit":
 		if c.CharMaxLength != nil {
 			return fmt.Sprintf("%s(%d)", c.Type, *c.CharMaxLength)
