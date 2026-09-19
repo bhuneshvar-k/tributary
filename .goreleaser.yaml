@@ -67,6 +67,7 @@ brews:
       owner: bhuneshvar-k
       name: homebrew-tap
       token: "{{ .Env.GORELEASER_TOKEN_BREW }}"
+    directory: Formula
     homepage: "https://github.com/bhuneshvar-k/tributary"
     description: "Postgres subsetting & sync CLI"
     license: "MIT"
