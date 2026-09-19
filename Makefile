@@ -1,7 +1,7 @@
 .PHONY: build build-mcp build-all run tidy test clean dev snapshot release
 
-# Version information - override with: make build VERSION=v1.0.0
-VERSION ?= dev
+# Version from latest git tag — override with: make build VERSION=v1.0.0
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 BUILT_BY ?= make

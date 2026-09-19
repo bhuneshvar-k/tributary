@@ -6,10 +6,7 @@
         "url": "https://mcp.mintlify.com"
       },
       "tributary": {
-        "type": "local",
-        "command": [
-          "tributary", "mcp"
-        ]
+        "command": ["tributary", "mcp"]
       }
     }
   }
