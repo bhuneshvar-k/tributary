@@ -60,15 +60,11 @@ release:
   prerelease: auto
   name_template: "v{{.Version}}"
 
-# Homebrew tap (will be configured when we set up Ticket 7)
-# brews:
-#   - repository:
-#       owner: bhuneshvar-k
-#       name: homebrew-tap
-#     homepage: "https://github.com/bhuneshvar-k/tributary"
-#     description: "Postgres subsetting & sync CLI"
-#     license: "MIT"
-#     install: |
-#       bin.install "tributary"
-#     test: |
-#       system "#{bin}/tributary", "--version"
+# Homebrew cask - auto-updates cask on each release
+homebrew_casks:
+  - repository:
+      owner: bhuneshvar-k
+      name: homebrew-tap
+    homepage: "https://github.com/bhuneshvar-k/tributary"
+    description: "Postgres subsetting & sync CLI"
+    license: "MIT"
