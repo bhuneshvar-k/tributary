@@ -449,6 +449,57 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## 🔒 Privacy & Data Security
+
+### Your Data Stays on Your Machines
+
+**Tributary is a local CLI tool. It never sees, stores, or transmits your data.**
+
+Tributary runs entirely on your machine and connects directly between your source and target Postgres databases. No data passes through any third-party server, cloud service, or analytics endpoint — not even temporarily.
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  Source Postgres │ ◄──► │    Tributary    │ ◄──► │ Target Postgres │
+│   (Your Server) │      │  (Your Machine) │      │  (Your Server)  │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+        ▲                                                  ▲
+        │              No external connections              │
+        └──────────────────────────────────────────────────┘
+```
+
+### What Tributary Does NOT Do
+
+| Action | Status |
+|--------|--------|
+| Send data to external servers | ❌ Never |
+| Phone home or report analytics | ❌ Never |
+| Log queries or row data | ❌ Never |
+| Store credentials in plaintext | ❌ Never |
+| Access the internet during sync | ❌ Never |
+| Upload schema information | ❌ Never |
+| Share usage statistics | ❌ Never |
+
+### What Tributary Accesses
+
+- **Schema metadata (read-only)** — Table names, columns, primary keys, foreign keys, enum types
+- **Row data (during sync only)** — Streamed directly between databases, never cached or stored by Tributary
+
+### Checkpoint File
+
+Tributary creates a local SQLite file (`.tributary/state.db`) to track sync progress. This file contains only:
+
+- Run identifiers (hashes)
+- Table names and sync status
+- Row counts
+
+**It does NOT contain row data, column values, or connection strings.**
+
+### Open Source & Auditable
+
+Tributary is fully open source under the MIT License. You can read the code, build from source, and verify no external connections are made.
+
+---
+
 ## 🔗 Links
 
 - [GitHub Repository](https://github.com/bhuneshvar-k/tributary)
