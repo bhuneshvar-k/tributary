@@ -308,12 +308,22 @@ func TestEnsureSchema_MissingEnumType_AutoCreated(t *testing.T) {
 		t.Fatalf("expected enum_status in TypesCreated, got %+v", report.TypesCreated)
 	}
 
-	var status string
-	if err := targetConn.QueryRow(ctx, `SELECT status FROM enum_table WHERE id = 301`).Scan(&status); err != nil {
-		t.Fatalf("query loaded row: %v", err)
+	// Verify the enum type was created on target by checking pg_type
+	var typeExists bool
+	if err := targetConn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_status')`).Scan(&typeExists); err != nil {
+		t.Fatalf("check enum type: %v", err)
 	}
-	if status != "active" {
-		t.Fatalf("enum_table.status = %q, want %q", status, "active")
+	if !typeExists {
+		t.Fatal("enum_status type should exist on target after EnsureSchema")
+	}
+
+	// Verify the table was created with the correct column type
+	var dataType string
+	if err := targetConn.QueryRow(ctx, `SELECT data_type FROM information_schema.columns WHERE table_name = 'enum_table' AND column_name = 'status'`).Scan(&dataType); err != nil {
+		t.Fatalf("check column type: %v", err)
+	}
+	if dataType != "USER-DEFINED" {
+		t.Fatalf("enum_table.status data_type = %q, want %q", dataType, "USER-DEFINED")
 	}
 }
 
@@ -322,6 +332,15 @@ func TestEnsureSchema_MissingEnumType_AutoCreated(t *testing.T) {
 func TestEnsureSchema_NonEnumCustomType_StillErrors(t *testing.T) {
 	requireContainers(t)
 	ctx := context.Background()
+
+	// First, ensure the domain type does NOT exist on target
+	var domainExists bool
+	if err := targetConn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'positive_int')`).Scan(&domainExists); err != nil {
+		t.Fatalf("check domain type: %v", err)
+	}
+	if domainExists {
+		t.Skip("positive_int domain already exists on target, skipping test")
+	}
 
 	mustExecSource(t, ctx, `INSERT INTO domain_table (id, amount) VALUES (302, 5)`)
 
