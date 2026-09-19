@@ -57,6 +57,5 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newPlanCmd())
 	root.AddCommand(newSyncCmd())
 	root.AddCommand(newUpdateCmd())
-	root.AddCommand(newMCPCmd())
 	return root
 }
