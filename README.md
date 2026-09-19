@@ -1,94 +1,130 @@
 # Tributary
 
-Tributary is a Go CLI for creating and syncing **referentially consistent Postgres subsets**.
+[![CI](https://github.com/bhuneshvar-k/tributary/actions/workflows/ci.yml/badge.svg)](https://github.com/bhuneshvar-k/tributary/actions/workflows/ci.yml)
+[![Release](https://github.com/bhuneshvar-k/tributary/actions/workflows/release.yml/badge.svg)](https://github.com/bhuneshvar-k/tributary/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/bhuneshvar-k/tributary)](https://goreportcard.com/report/github.com/bhuneshvar-k/tributary)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-You choose seed rows (for example, one tenant or one user), Tributary walks real foreign keys plus user-declared relationships, computes the closure of rows that must travel together, and loads that subset into a target Postgres database.
+A fast, reliable CLI for creating and syncing **referentially consistent Postgres subsets**.
 
-## What it does today
+Tributary walks real foreign keys plus user-declared relationships, computes the closure of rows that must travel together, and loads that subset into a target Postgres database.
 
-Current implemented commands:
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  Source Postgres │ ───► │    Tributary    │ ───► │ Target Postgres │
+│   (Production)  │      │  (CLI Tool)     │      │  (Dev/Staging)  │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+```
 
-- `tributary inspect` — introspect schema (tables, columns, PKs, FKs, enums) as JSON
-- `tributary plan` — compute subset row closure and print per-table row counts
-- `tributary sync run` — copy the computed subset from source DB to target DB
+## ✨ Features
 
-Current phase status is tracked in [`docs/PLAN.md`](docs/PLAN.md).
+- **Referential Integrity** - Automatically follows foreign keys to maintain data relationships
+- **Cross-Platform** - Works on macOS, Linux, and Windows (amd64 & arm64)
+- **Auto-Updates** - Built-in version checking with easy upgrade path
+- **Resumable Sync** - Checkpoint system allows interrupted syncs to resume
+- **Schema Auto-Create** - Automatically creates missing target tables
+- **Upsert Mode** - Safe to re-run; updates existing rows, inserts new ones
 
-## Why Tributary
+## 📦 Installation
 
-Tributary is designed for cases like:
+### Homebrew (macOS/Linux) - Recommended
 
-- creating lightweight staging/dev datasets from production-like schemas
-- keeping a scoped subset synchronized to another Postgres database
-- working with schemas that rely on app-level relations not enforced in DB constraints
+```sh
+brew tap bhuneshvar-k/tap
+brew install tributary
+```
 
-## Requirements
+### curl Installer (macOS/Linux)
 
-- Go `1.25+` (see `go.mod`)
-- Postgres source database
-- Postgres target database (for `sync run`)
-- Optional: Docker for integration tests
+```sh
+curl -sSL https://get.tributary.dev | bash
+```
 
-## Install / Build
+With options:
+
+```sh
+# Install specific version
+curl -sSL https://get.tributary.dev | bash -s -- --version v1.0.0
+
+# Install to custom directory
+curl -sSL https://get.tributary.dev | bash -s -- --to ~/.local/bin
+```
+
+### Go Install
+
+```sh
+go install github.com/bhuneshvar-k/tributary/cmd/tributary@latest
+```
+
+### GitHub Releases
+
+Download the latest binary for your platform from [Releases](https://github.com/bhuneshvar-k/tributary/releases).
+
+### Build from Source
 
 ```sh
 git clone https://github.com/bhuneshvar-k/tributary.git
 cd tributary
-go mod tidy
 make build
+./bin/tributary --version
 ```
 
-Binary location:
+## 🚀 Quick Start
 
-- `/home/runner/work/tributary/tributary/bin/tributary` (in this environment)
-- `./bin/tributary` (relative from repo root)
-
-## CLI overview
+### 1. Inspect Your Schema
 
 ```sh
-./bin/tributary --help
+export TRIBUTARY_DSN="postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+
+tributary inspect
 ```
 
-Top-level commands:
+This shows your database schema (tables, columns, keys, relationships) as JSON.
 
-- `inspect`
-- `plan`
-- `sync run`
+### 2. Plan a Subset
 
-## Typical workflow
+```sh
+tributary plan \
+  --seed-table users \
+  --seed-predicate "id = 42"
+```
 
-1. **Inspect** source schema
-2. (Optional) define app-level relations in `tributary.schema.yaml`
-3. **Plan** a seeded subset
-4. **Sync** the subset into target DB
-5. Re-run `sync run` to refresh target data
+This computes which rows are needed and shows per-table counts.
 
----
+### 3. Sync the Subset
 
-## Command reference
+```sh
+tributary sync run \
+  --source-dsn "$SOURCE_DSN" \
+  --target-dsn "$TARGET_DSN" \
+  --seed-table users \
+  --seed-predicate "id = 42"
+```
+
+This copies the referentially consistent subset to your target database.
+
+## 📖 Command Reference
 
 ### `tributary inspect`
 
 Prints source schema metadata as JSON.
 
 ```sh
-./bin/tributary inspect --dsn "$TRIBUTARY_DSN"
-# or:
-TRIBUTARY_DSN='postgres://...'
-./bin/tributary inspect
+tributary inspect --dsn "$TRIBUTARY_DSN"
 ```
 
-Flags:
+**Flags:**
 
-- `--dsn string` (or env `TRIBUTARY_DSN`)
+| Flag | Description |
+|------|-------------|
+| `--dsn` | Database connection string (or env `TRIBUTARY_DSN`) |
 
-Output includes:
-
-- tables
-- columns and nullability/type metadata
-- primary keys
-- foreign keys
-- enum definitions
+**Output includes:**
+- Tables
+- Columns with nullability/type metadata
+- Primary keys
+- Foreign keys
+- Enum definitions
 
 ---
 
@@ -97,28 +133,29 @@ Output includes:
 Computes a referentially consistent subset from a seed table + predicate.
 
 ```sh
-./bin/tributary plan \
+tributary plan \
   --dsn "$TRIBUTARY_DSN" \
   --seed-table users \
   --seed-predicate "id = 42" \
   --schema-file tributary.schema.yaml
 ```
 
-Flags:
+**Flags:**
 
-- `--dsn string` (or env `TRIBUTARY_DSN`)
-- `--seed-table string` (required)
-- `--seed-predicate string` (required)
-- `--schema-file string` (optional)
-- `--strict-cycles` (fail instead of best-effort auto cycle break)
-- `--include-upstream` (use full bidirectional fan-out)
-- `--format text|json` (default `text`)
+| Flag | Description |
+|------|-------------|
+| `--dsn` | Database connection string (or env `TRIBUTARY_DSN`) |
+| `--seed-table` | Starting table for subset (required) |
+| `--seed-predicate` | SQL WHERE fragment to select seed rows (required) |
+| `--schema-file` | Path to schema relations file (optional) |
+| `--strict-cycles` | Fail instead of auto-breaking cycles |
+| `--include-upstream` | Enable full bidirectional fan-out |
+| `--format` | Output format: `text` or `json` (default: `text`) |
 
-Behavior notes:
-
-- Default mode is **downstream-only**: required parent rows are included but not used to fan out to all siblings.
-- `--include-upstream` enables full fan-out from any discovered row.
-- `--seed-predicate` is a raw SQL `WHERE` fragment and is used directly.
+**Behavior:**
+- Default mode is **downstream-only**: required parent rows are included but don't fan out to all siblings
+- `--include-upstream` enables full fan-out from any discovered row
+- `--seed-predicate` is a raw SQL `WHERE` fragment
 
 ---
 
@@ -127,162 +164,224 @@ Behavior notes:
 Executes one-shot subset copy from source to target.
 
 ```sh
-./bin/tributary sync run \
-  --source-dsn "$TRIBUTARY_SOURCE_DSN" \
-  --target-dsn "$TRIBUTARY_TARGET_DSN" \
+tributary sync run \
+  --source-dsn "$SOURCE_DSN" \
+  --target-dsn "$TARGET_DSN" \
   --seed-table users \
   --seed-predicate "id = 42" \
   --schema-file tributary.schema.yaml
 ```
 
-Flags:
+**Flags:**
 
-- `--source-dsn string` (or env `TRIBUTARY_SOURCE_DSN`) — required
-- `--target-dsn string` (or env `TRIBUTARY_TARGET_DSN`) — required
-- `--seed-table string` — required
-- `--seed-predicate string` — required
-- `--schema-file string` — optional
-- `--strict-cycles`
-- `--include-upstream`
-- `--fresh`
-- `--no-create-schema`
-- `--state-db string` (default `./.tributary/state.db`)
-- `--no-resume`
-- `--format text|json` (default `text`)
+| Flag | Description |
+|------|-------------|
+| `--source-dsn` | Source database connection (or env `TRIBUTARY_SOURCE_DSN`) |
+| `--target-dsn` | Target database connection (or env `TRIBUTARY_TARGET_DSN`) |
+| `--seed-table` | Starting table for subset |
+| `--seed-predicate` | SQL WHERE fragment to select seed rows |
+| `--schema-file` | Path to schema relations file |
+| `--strict-cycles` | Fail instead of auto-breaking cycles |
+| `--include-upstream` | Enable full bidirectional fan-out |
+| `--fresh` | Force cleanup before reload |
+| `--no-create-schema` | Skip auto-creating target tables |
+| `--state-db` | Path to checkpoint database (default: `.tributary/state.db`) |
+| `--no-resume` | Don't resume from checkpoints |
+| `--format` | Output format: `text` or `json` (default: `text`) |
 
-Behavior notes:
-
-- Default write mode is **upsert** (`INSERT ... ON CONFLICT DO UPDATE` by PK).
-- Re-running `sync run` with same scope is expected and safe.
-- `--fresh` performs subset-scoped cleanup before reload and resets stuck in-progress run state.
-- If enabled (default), missing target tables are auto-created from source schema.
-- Run checkpointing is stored in local SQLite (`--state-db`) for crash resume.
+**Behavior:**
+- Default write mode is **upsert** (`INSERT ... ON CONFLICT DO UPDATE`)
+- Re-running with same scope is safe and expected
+- `--fresh` performs subset-scoped cleanup before reload
+- Missing target tables are auto-created by default
+- Checkpointing in local SQLite for crash resume
 
 ---
 
-## `tributary.schema.yaml` (declared relationships)
+### `tributary update`
 
-Use this file when real DB constraints do not represent all relationships.
+Updates tributary to the latest version.
 
-Examples supported:
+```sh
+tributary update
+```
 
-- soft FK (`from` + `to`)
-- composite key (`from` list + `to` list)
-- polymorphic association (`from` + `polymorphic_type` + `targets`)
-- ignored FK edge (`ignore`)
-- cycle handling (`dependency_breaks`)
+**Features:**
+- Automatically downloads and installs the latest version
+- Falls back to manual instructions if self-update fails
+- Shows current and available versions
 
-Start from [`tributary.schema.example.yaml`](tributary.schema.example.yaml).
+---
 
-Example:
+### `tributary --version`
 
+Shows version information.
+
+```sh
+tributary --version
+# tributary version v1.0.0
+```
+
+## 📋 Schema Relations File
+
+Use `tributary.schema.yaml` when real DB constraints don't represent all relationships.
+
+### Supported Relation Types
+
+**Soft Foreign Key:**
 ```yaml
 relations:
   - from: orders.user_id
     to: users.id
+```
 
+**Composite Key:**
+```yaml
+relations:
   - from: [line_items.order_id, line_items.tenant_id]
     to: [orders.id, orders.tenant_id]
+```
 
+**Polymorphic Association:**
+```yaml
+relations:
   - from: comments.commentable_id
     polymorphic_type: comments.commentable_type
     targets:
       Post: posts.id
       Photo: photos.id
+```
 
+**Ignore FK Edge:**
+```yaml
+relations:
   - ignore: audit_logs.actor_id
+```
 
+**Dependency Breaks (Cycle Handling):**
+```yaml
 dependency_breaks:
   - table: employees
     column: manager_id
 ```
 
-Validation rules include:
+See [`tributary.schema.example.yaml`](tributary.schema.example.yaml) for a complete example.
 
-- each relation must be exactly one shape
-- composite key list lengths must match
-- malformed `table.column` references fail validation
+## 🔄 Typical Workflow
 
-Unqualified table references default to `public`.
+```
+1. Inspect Schema
+   └─► tributary inspect --dsn "$SOURCE_DSN"
 
-## Schema creation behavior (`sync run`)
+2. (Optional) Define Relations
+   └─► Create tributary.schema.yaml
 
-When auto-create is enabled (default), Tributary can create missing target tables with:
+3. Plan Subset
+   └─► tributary plan --seed-table users --seed-predicate "id = 42"
 
-- columns + data types
-- `NOT NULL`
-- `PRIMARY KEY`
-- real foreign keys
-- missing enum type definitions used by copied tables
+4. Sync to Target
+   └─► tributary sync run --source-dsn ... --target-dsn ...
 
-It does **not** replicate all source DDL. Not covered includes:
+5. Refresh (Optional)
+   └─► Re-run sync run to update target data
+```
 
-- defaults
-- sequences/identity
-- check constraints
-- indexes beyond PK
-- triggers
-- views
-- non-enum custom types (for example domains/composites/ranges)
+## 🛠️ Development
 
-If an unsupported custom type is needed on target, `sync run` fails with a named preflight error.
+### Prerequisites
 
-## Resume and run identity
+- Go 1.25+
+- Docker (for integration tests)
 
-`sync run` checkpoints table completion in a local SQLite DB.
+### Build
 
-- run identity is derived from source/target fingerprints + seed table + seed predicate + schema file hash
-- completed/failed runs are reset and reprocessed on new invocation
-- in-progress runs resume by skipping already completed tables
-- `--fresh` forces reset even for in-progress runs
+```sh
+make build
+```
 
-## Output formats
-
-`plan` and `sync run` support:
-
-- `--format text` (human-readable table output)
-- `--format json` (machine-readable)
-
-Warnings (such as unrecognized polymorphic target values) are emitted to stderr.
-
-## Testing
-
-Run all tests:
+### Run Tests
 
 ```sh
 make test
-# or:
-go test ./...
 ```
 
-Notes:
+### Development Build
 
-- Unit tests run without Docker.
-- Integration tests in `internal/load` and `cmd/tributary` use `testcontainers-go` with real Postgres and require Docker.
-- If Docker is unavailable, those tests self-skip with a clear message.
+```sh
+make dev
+```
 
-## Development notes
+### Project Structure
 
-- `Makefile` targets: `build`, `run`, `tidy`, `test`
-- Root command implementation: `cmd/tributary`
-- Core packages:
-  - `internal/catalog`: schema introspection
-  - `internal/graph`: graph build + closure walk
-  - `internal/subset`: dependency ordering
-  - `internal/load`: schema ensure + copy/upsert load
-  - `internal/state`: SQLite checkpointing
+```
+tributary/
+├── cmd/tributary/        # CLI entry point
+├── internal/
+│   ├── catalog/          # Schema introspection
+│   ├── graph/            # Graph build + closure walk
+│   ├── subset/           # Dependency ordering
+│   ├── load/             # Schema ensure + copy/upsert
+│   ├── state/            # SQLite checkpointing
+│   └── version/          # Version info + update check
+├── pkg/config/           # Configuration handling
+├── docs/                 # Documentation
+└── .goreleaser.yaml      # Release configuration
+```
 
-## Current limitations
+## 🔧 Environment Variables
 
-Planned but not implemented yet:
+| Variable | Description |
+|----------|-------------|
+| `TRIBUTARY_DSN` | Default database connection string |
+| `TRIBUTARY_SOURCE_DSN` | Source database for sync |
+| `TRIBUTARY_TARGET_DSN` | Target database for sync |
+| `INSTALL_DIR` | Custom install directory for installer script |
 
-- masking/transform pipeline
-- continuous incremental sync via logical replication (`sync watch`)
-- observability/hardening phase
-- lightweight branching workflow
+## 📊 Schema Creation Behavior
 
-See [`docs/PLAN.md`](docs/PLAN.md) for roadmap.
+When auto-create is enabled (default), Tributary creates missing target tables with:
 
-## License
+- ✅ Columns + data types
+- ✅ `NOT NULL` constraints
+- ✅ `PRIMARY KEY` constraints
+- ✅ Real foreign keys
+- ✅ Enum type definitions
 
-MIT — see [LICENSE](LICENSE).
+**Not covered:**
+- ❌ Defaults
+- ❌ Sequences/identity
+- ❌ Check constraints
+- ❌ Indexes beyond PK
+- ❌ Triggers
+- ❌ Views
+- ❌ Non-enum custom types
+
+## 🗺️ Roadmap
+
+- [ ] Masking/transform pipeline
+- [ ] Incremental sync via logical replication (`sync watch`)
+- [ ] Observability & hardening
+- [ ] Lightweight branching workflow
+
+See [`docs/PLAN.md`](docs/PLAN.md) for detailed roadmap.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🔗 Links
+
+- [GitHub Repository](https://github.com/bhuneshvar-k/tributary)
+- [Releases](https://github.com/bhuneshvar-k/tributary/releases)
+- [Issue Tracker](https://github.com/bhuneshvar-k/tributary/issues)
+- [Documentation](docs/)
