@@ -8,7 +8,8 @@ before:
     - go test ./...
 
 builds:
-  - main: ./cmd/tributary
+  - id: tributary
+    main: ./cmd/tributary
     binary: tributary
     env:
       - CGO_ENABLED=0
@@ -26,7 +27,8 @@ builds:
       - -X github.com/bhuneshvar-k/tributary/internal/version.date={{.Date}}
       - -X github.com/bhuneshvar-k/tributary/internal/version.builtBy=goreleaser
 
-  - main: ./cmd/mcp-server
+  - id: mcp-server
+    main: ./cmd/mcp-server
     binary: tributary-mcp-server
     env:
       - CGO_ENABLED=0
