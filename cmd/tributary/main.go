@@ -42,8 +42,13 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		Version:       version.Short(),
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			// Skip version check for certain commands
+			if cmd.Name() == "version" || cmd.Name() == "update" || cmd.Name() == "help" {
+				return
+			}
+
 			// Check for updates (non-blocking, cached daily)
-			if updateMsg, hasUpdate := checkForUpdate(); hasUpdate {
+			if updateMsg, hasUpdate := version.CheckForUpdate(version.Version()); hasUpdate {
 				fmt.Fprintf(os.Stderr, "ℹ️  %s\n", updateMsg)
 			}
 		},
@@ -53,13 +58,4 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newSyncCmd())
 	root.AddCommand(newUpdateCmd())
 	return root
-}
-
-// checkForUpdate checks if a newer version is available.
-// Returns the update message and true if an update is available.
-// This is a placeholder that will be implemented in Ticket 4.
-func checkForUpdate() (string, bool) {
-	// TODO: Implement version check in Ticket 4
-	// For now, return no update available
-	return "", false
 }
