@@ -414,7 +414,72 @@ tributary/
 └── .goreleaser.yaml      # Release configuration
 ```
 
-## 🔧 Environment Variables
+## ⚙️ Configuration
+
+Tributary stores user-level configuration in `~/.tributary/config.yaml`. This file is optional — all commands work without it via CLI flags and environment variables.
+
+### Precedence
+
+**CLI flags > Environment variables > Config file**
+
+### Config Commands
+
+```sh
+# Set a value
+tributary config set dsn "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+
+# Get a value
+tributary config get dsn
+
+# List all values
+tributary config list
+
+# Remove a value
+tributary config unset dsn
+
+# Show config file path
+tributary config path
+```
+
+### Available Config Keys
+
+| Key | Description |
+|-----|-------------|
+| `dsn` | Default Postgres connection string (inspect, plan) |
+| `source_dsn` | Default source Postgres connection string (sync run) |
+| `target_dsn` | Default target Postgres connection string (sync run) |
+| `seed_table` | Default seed table name |
+| `seed_predicate` | Default seed predicate (raw SQL WHERE fragment) |
+| `schema_file` | Default path to tributary.schema.yaml |
+| `ai.provider` | AI provider: `claude`, `openai`, `gemini`, `openrouter`, or `opencode` |
+| `ai.api_key` | API key for the AI provider (stored with `0600` permissions) |
+| `ai.model` | AI model override (empty = provider default) |
+| `ai.base_url` | Custom AI API endpoint (empty = provider default) |
+
+### Example Config File
+
+```yaml
+# ~/.tributary/config.yaml
+dsn: "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+source_dsn: "postgres://user:pass@localhost:5432/prod?sslmode=disable"
+target_dsn: "postgres://user:pass@localhost:5432/dev?sslmode=disable"
+seed_table: users
+seed_predicate: "id = 42"
+schema_file: "./tributary.schema.yaml"
+ai:
+  provider: claude
+  api_key: "sk-ant-your-key-here"
+  model: "claude-sonnet-4-20250514"
+```
+
+### Security
+
+- Config file is written with `0600` permissions (owner read/write only)
+- DSN strings may contain passwords — the file is not world-readable
+- API keys are stored in the same file with the same protections
+- Config directory is created with `0700` permissions
+
+### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
@@ -422,17 +487,6 @@ tributary/
 | `TRIBUTARY_SOURCE_DSN` | Source database for sync |
 | `TRIBUTARY_TARGET_DSN` | Target database for sync |
 | `INSTALL_DIR` | Custom install directory for installer script |
-
-## 🤖 AI Configuration
-
-| Config Key | Description |
-|------------|-------------|
-| `ai.provider` | AI provider: `claude`, `openai`, `gemini`, `openrouter`, or `opencode` |
-| `ai.api_key` | API key for the provider (stored with `0600` permissions) |
-| `ai.model` | Model override (empty = provider default) |
-| `ai.base_url` | Custom API endpoint (empty = provider default) |
-
-Set via `tributary config set <key> <value>` or edit `~/.tributary/config.yaml` directly.
 
 ## 📊 Schema Creation Behavior
 
