@@ -19,6 +19,7 @@ Tributary walks real foreign keys plus user-declared relationships, computes the
 ## ✨ Features
 
 - **Referential Integrity** - Automatically follows foreign keys to maintain data relationships
+- **AI-Powered** - Use natural language to plan and sync subsets (`tributary ai "sync user admin@example.com"`)
 - **Cross-Platform** - Works on macOS, Linux, and Windows (amd64 & arm64)
 - **Auto-Updates** - Built-in version checking with easy upgrade path
 - **Resumable Sync** - Checkpoint system allows interrupted syncs to resume
@@ -201,6 +202,85 @@ tributary sync run \
 
 ---
 
+### `tributary ai`
+
+Natural language interface — describe what you want in plain English and Tributary generates and runs the command.
+
+```sh
+tributary ai "sync user admin@example.com"
+```
+
+**Setup (one-time):**
+
+```sh
+# Pick a provider (claude, openai, gemini, openrouter, opencode)
+tributary config set ai.provider claude
+
+# Set your API key
+tributary config set ai.api_key "sk-ant-your-key-here"
+
+# (Optional) Set your DSN so the AI knows your schema
+tributary config set dsn "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show the generated command without executing it |
+| `--auto` | Skip confirmation prompt and execute immediately |
+| `--provider` | Override AI provider for this invocation |
+| `--model` | Override the AI model for this invocation |
+| `--max-tokens` | Override max response tokens |
+| `--format` | Output format: `text` or `json` (default: `text`) |
+
+**Examples:**
+
+```sh
+# Basic usage — AI translates your words into a tributary command
+tributary ai "sync user admin@example.com"
+tributary ai "plan a subset for all active users"
+tributary ai "show me the schema for the orders table"
+
+# Preview what the AI would do (no execution)
+tributary ai --dry-run "sync all orders from last 7 days"
+
+# Skip confirmation prompt
+tributary ai --auto "subset users where team = 'marketing'"
+
+# Override provider/model per invocation
+tributary ai --provider openai "sync user 42"
+tributary ai --provider gemini --model gemini-2.0-flash "plan orders"
+
+# JSON output (for scripting)
+tributary ai --format json "sync user admin@example.com"
+```
+
+**How it works:**
+
+1. If a DSN is configured, Tributary inspects your database schema (tables, columns, foreign keys) and sends that metadata as context to the AI
+2. The AI translates your natural language instruction into a structured Tributary command
+3. The command, explanation, and any warnings are displayed
+4. Unless `--dry-run` is set, the command executes after confirmation (or immediately with `--auto`)
+
+**Supported AI providers:**
+
+| Provider | Default Model | API Key Config |
+|----------|--------------|----------------|
+| `claude` | `claude-sonnet-4-20250514` | `ai.api_key` |
+| `openai` | `gpt-4o` | `ai.api_key` |
+| `gemini` | `gemini-2.0-flash` | `ai.api_key` |
+| `openrouter` | `anthropic/claude-sonnet-4-20250514` | `ai.api_key` |
+| `opencode` | `claude-sonnet-4-20250514` | (local, no key needed) |
+
+**Security:**
+
+- API keys are stored with `0600` file permissions (same as DSN passwords)
+- Only schema metadata is sent to AI providers — never row data or connection strings
+- Write operations (`sync run`) require confirmation by default
+
+---
+
 ### `tributary update`
 
 Updates tributary to the latest version.
@@ -320,13 +400,16 @@ make dev
 tributary/
 ├── cmd/tributary/        # CLI entry point
 ├── internal/
+│   ├── ai/               # AI provider abstraction + command generation
 │   ├── catalog/          # Schema introspection
 │   ├── graph/            # Graph build + closure walk
 │   ├── subset/           # Dependency ordering
 │   ├── load/             # Schema ensure + copy/upsert
 │   ├── state/            # SQLite checkpointing
 │   └── version/          # Version info + update check
-├── pkg/config/           # Configuration handling
+├── pkg/
+│   ├── config/           # Schema relations config
+│   └── userconfig/       # User-level config (~/.tributary/config.yaml)
 ├── docs/                 # Documentation
 └── .goreleaser.yaml      # Release configuration
 ```
@@ -339,6 +422,17 @@ tributary/
 | `TRIBUTARY_SOURCE_DSN` | Source database for sync |
 | `TRIBUTARY_TARGET_DSN` | Target database for sync |
 | `INSTALL_DIR` | Custom install directory for installer script |
+
+## 🤖 AI Configuration
+
+| Config Key | Description |
+|------------|-------------|
+| `ai.provider` | AI provider: `claude`, `openai`, `gemini`, `openrouter`, or `opencode` |
+| `ai.api_key` | API key for the provider (stored with `0600` permissions) |
+| `ai.model` | Model override (empty = provider default) |
+| `ai.base_url` | Custom API endpoint (empty = provider default) |
+
+Set via `tributary config set <key> <value>` or edit `~/.tributary/config.yaml` directly.
 
 ## 📊 Schema Creation Behavior
 
@@ -361,6 +455,7 @@ When auto-create is enabled (default), Tributary creates missing target tables w
 
 ## 🗺️ Roadmap
 
+- [x] AI-powered natural language interface (`tributary ai`)
 - [ ] Masking/transform pipeline
 - [ ] Incremental sync via logical replication (`sync watch`)
 - [ ] Observability & hardening
@@ -404,18 +499,19 @@ Tributary runs entirely on your machine and connects directly between your sourc
 
 | Action | Status |
 |--------|--------|
-| Send data to external servers | ❌ Never |
+| Send data to external servers | ❌ Never (except AI provider when `tributary ai` is used) |
 | Phone home or report analytics | ❌ Never |
 | Log queries or row data | ❌ Never |
 | Store credentials in plaintext | ❌ Never |
 | Access the internet during sync | ❌ Never |
-| Upload schema information | ❌ Never |
+| Upload schema information | ❌ Never (except to AI provider for `tributary ai` context) |
 | Share usage statistics | ❌ Never |
 
 ### What Tributary Accesses
 
 - **Schema metadata (read-only)** — Table names, columns, primary keys, foreign keys, enum types
 - **Row data (during sync only)** — Streamed directly between databases, never cached or stored by Tributary
+- **AI provider (opt-in, `tributary ai` only)** — When you use `tributary ai`, schema metadata (table/column names, foreign keys) is sent to the configured AI provider for command generation. Row data and connection strings are never sent.
 
 ### Checkpoint File
 
