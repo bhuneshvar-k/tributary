@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -66,16 +67,136 @@ func NewOpenRouter(apiKey, model string) Provider {
 	if model == "" {
 		model = "anthropic/claude-sonnet-4-20250514"
 	}
-	p := NewOpenAI(apiKey, model, "https://openrouter.ai/api/v1")
-	// Override name after creation.
-	return &openRouterAlias{Provider: p}
+	return &openRouterProvider{
+		apiKey: apiKey,
+		model:  model,
+	}
 }
 
-type openRouterAlias struct {
-	Provider
+type openRouterProvider struct {
+	apiKey string
+	model  string
 }
 
-func (p *openRouterAlias) Name() string { return "openrouter" }
+func (p *openRouterProvider) Name() string            { return "openrouter" }
+func (p *openRouterProvider) SupportsStreaming() bool { return true }
+
+func (p *openRouterProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
+	model := p.model
+	if req.Model != "" {
+		model = req.Model
+	}
+
+	body := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "system", "content": req.SystemPrompt},
+			{"role": "user", "content": req.UserPrompt},
+		},
+		"temperature": req.Temperature,
+	}
+	if req.MaxTokens > 0 {
+		body["max_tokens"] = req.MaxTokens
+	}
+
+	return doOpenRouter(ctx, p.apiKey, body, model)
+}
+
+func doOpenRouter(ctx context.Context, apiKey string, body map[string]any, model string) (*Response, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := "https://openrouter.ai/api/v1/chat/completions"
+	const maxRetries = 3
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			fmt.Fprintf(os.Stderr, "⏳ Retrying in %v (attempt %d/%d)...\n", backoff, attempt+1, maxRetries)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		// OpenRouter recommends these headers for app identification.
+		httpReq.Header.Set("HTTP-Referer", "https://github.com/bhuneshvar-k/tributary")
+		httpReq.Header.Set("X-Title", "Tributary CLI")
+
+		start := time.Now()
+		httpResp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			lastErr = &ProviderError{Provider: "openrouter", Message: "request failed", Err: err}
+			continue
+		}
+
+		raw, err := io.ReadAll(httpResp.Body)
+		httpResp.Body.Close()
+		if err != nil {
+			lastErr = &ProviderError{Provider: "openrouter", Message: "read response", Err: err}
+			continue
+		}
+
+		// Retry on 429 (rate limit) and 5xx (server errors).
+		if httpResp.StatusCode == http.StatusTooManyRequests || httpResp.StatusCode >= 500 {
+			lastErr = &ProviderError{
+				Provider:   "openrouter",
+				StatusCode: httpResp.StatusCode,
+				Message:    extractErrorMessage(raw),
+			}
+			continue
+		}
+
+		if httpResp.StatusCode != http.StatusOK {
+			return nil, &ProviderError{
+				Provider:   "openrouter",
+				StatusCode: httpResp.StatusCode,
+				Message:    extractErrorMessage(raw),
+			}
+		}
+
+		var ocr openaiChatResponse
+		if err := json.Unmarshal(raw, &ocr); err != nil {
+			return nil, &ProviderError{Provider: "openrouter", Message: "decode response", Err: err}
+		}
+
+		content := ""
+		if len(ocr.Choices) > 0 {
+			content = ocr.Choices[0].Message.Content
+		}
+
+		actualModel := ocr.Model
+		if actualModel == "" {
+			actualModel = model
+		}
+
+		return &Response{
+			Content: content,
+			Model:   actualModel,
+			Tokens: TokenUsage{
+				PromptTokens:     ocr.Usage.PromptTokens,
+				CompletionTokens: ocr.Usage.CompletionTokens,
+				TotalTokens:      ocr.Usage.TotalTokens,
+			},
+			Latency: time.Since(start),
+			Raw:     raw,
+		}, nil
+	}
+
+	return nil, lastErr
+}
 
 // ---------------------------------------------------------------------------
 // Claude (Anthropic Messages API)
@@ -149,57 +270,86 @@ func (p *claudeProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}
 
 	url := p.baseURL + "/v1/messages"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", p.apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	const maxRetries = 3
+	var lastErr error
 
-	start := time.Now()
-	httpResp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, &ProviderError{Provider: "claude", Message: "request failed", Err: err}
-	}
-	defer httpResp.Body.Close()
-
-	raw, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, &ProviderError{Provider: "claude", Message: "read response", Err: err}
-	}
-
-	if httpResp.StatusCode != http.StatusOK {
-		return nil, &ProviderError{
-			Provider:   "claude",
-			StatusCode: httpResp.StatusCode,
-			Message:    extractErrorMessage(raw),
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			fmt.Fprintf(os.Stderr, "⏳ Retrying in %v (attempt %d/%d)...\n", backoff, attempt+1, maxRetries)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
-	}
 
-	var cr2 claudeResponse
-	if err := json.Unmarshal(raw, &cr2); err != nil {
-		return nil, &ProviderError{Provider: "claude", Message: "decode response", Err: err}
-	}
-
-	content := ""
-	for _, c := range cr2.Content {
-		if c.Type == "text" {
-			content += c.Text
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
 		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("x-api-key", p.apiKey)
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+		start := time.Now()
+		httpResp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			lastErr = &ProviderError{Provider: "claude", Message: "request failed", Err: err}
+			continue
+		}
+
+		raw, err := io.ReadAll(httpResp.Body)
+		httpResp.Body.Close()
+		if err != nil {
+			lastErr = &ProviderError{Provider: "claude", Message: "read response", Err: err}
+			continue
+		}
+
+		// Retry on 429 (rate limit) and 5xx (server errors).
+		if httpResp.StatusCode == http.StatusTooManyRequests || httpResp.StatusCode >= 500 {
+			lastErr = &ProviderError{
+				Provider:   "claude",
+				StatusCode: httpResp.StatusCode,
+				Message:    extractErrorMessage(raw),
+			}
+			continue
+		}
+
+		if httpResp.StatusCode != http.StatusOK {
+			return nil, &ProviderError{
+				Provider:   "claude",
+				StatusCode: httpResp.StatusCode,
+				Message:    extractErrorMessage(raw),
+			}
+		}
+
+		var cr2 claudeResponse
+		if err := json.Unmarshal(raw, &cr2); err != nil {
+			return nil, &ProviderError{Provider: "claude", Message: "decode response", Err: err}
+		}
+
+		content := ""
+		for _, c := range cr2.Content {
+			if c.Type == "text" {
+				content += c.Text
+			}
+		}
+
+		return &Response{
+			Content: content,
+			Model:   cr2.Model,
+			Tokens: TokenUsage{
+				PromptTokens:     cr2.Usage.InputTokens,
+				CompletionTokens: cr2.Usage.OutputTokens,
+				TotalTokens:      cr2.Usage.InputTokens + cr2.Usage.OutputTokens,
+			},
+			Latency: time.Since(start),
+			Raw:     raw,
+		}, nil
 	}
 
-	return &Response{
-		Content: content,
-		Model:   cr2.Model,
-		Tokens: TokenUsage{
-			PromptTokens:     cr2.Usage.InputTokens,
-			CompletionTokens: cr2.Usage.OutputTokens,
-			TotalTokens:      cr2.Usage.InputTokens + cr2.Usage.OutputTokens,
-		},
-		Latency: time.Since(start),
-		Raw:     raw,
-	}, nil
+	return nil, lastErr
 }
 
 // ---------------------------------------------------------------------------
@@ -360,68 +510,98 @@ func NewOpenCode(apiKey, model, baseURL string) Provider {
 // ---------------------------------------------------------------------------
 
 // doOpenAICompatible handles the OpenAI chat-completions wire format used by
-// OpenAI, OpenRouter, and OpenCode.
+// OpenAI and OpenCode. Retries on transient errors (429, 5xx).
 func doOpenAICompatible(ctx context.Context, apiKey, url string, body map[string]any, providerName, model string) (*Response, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
+	const maxRetries = 3
+	var lastErr error
 
-	start := time.Now()
-	httpResp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, &ProviderError{Provider: providerName, Message: "request failed", Err: err}
-	}
-	defer httpResp.Body.Close()
-
-	raw, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, &ProviderError{Provider: providerName, Message: "read response", Err: err}
-	}
-
-	if httpResp.StatusCode != http.StatusOK {
-		return nil, &ProviderError{
-			Provider:   providerName,
-			StatusCode: httpResp.StatusCode,
-			Message:    extractErrorMessage(raw),
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 1s, 2s, 4s
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			fmt.Fprintf(os.Stderr, "⏳ Retrying in %v (attempt %d/%d)...\n", backoff, attempt+1, maxRetries)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+
+		start := time.Now()
+		httpResp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			lastErr = &ProviderError{Provider: providerName, Message: "request failed", Err: err}
+			continue
+		}
+
+		raw, err := io.ReadAll(httpResp.Body)
+		httpResp.Body.Close()
+		if err != nil {
+			lastErr = &ProviderError{Provider: providerName, Message: "read response", Err: err}
+			continue
+		}
+
+		// Retry on 429 (rate limit) and 5xx (server errors).
+		if httpResp.StatusCode == http.StatusTooManyRequests || httpResp.StatusCode >= 500 {
+			lastErr = &ProviderError{
+				Provider:   providerName,
+				StatusCode: httpResp.StatusCode,
+				Message:    extractErrorMessage(raw),
+			}
+			continue
+		}
+
+		if httpResp.StatusCode != http.StatusOK {
+			return nil, &ProviderError{
+				Provider:   providerName,
+				StatusCode: httpResp.StatusCode,
+				Message:    extractErrorMessage(raw),
+			}
+		}
+
+		var ocr openaiChatResponse
+		if err := json.Unmarshal(raw, &ocr); err != nil {
+			return nil, &ProviderError{Provider: providerName, Message: "decode response", Err: err}
+		}
+
+		content := ""
+		if len(ocr.Choices) > 0 {
+			content = ocr.Choices[0].Message.Content
+		}
+
+		actualModel := ocr.Model
+		if actualModel == "" {
+			actualModel = model
+		}
+
+		return &Response{
+			Content: content,
+			Model:   actualModel,
+			Tokens: TokenUsage{
+				PromptTokens:     ocr.Usage.PromptTokens,
+				CompletionTokens: ocr.Usage.CompletionTokens,
+				TotalTokens:      ocr.Usage.TotalTokens,
+			},
+			Latency: time.Since(start),
+			Raw:     raw,
+		}, nil
 	}
 
-	var ocr openaiChatResponse
-	if err := json.Unmarshal(raw, &ocr); err != nil {
-		return nil, &ProviderError{Provider: providerName, Message: "decode response", Err: err}
-	}
-
-	content := ""
-	if len(ocr.Choices) > 0 {
-		content = ocr.Choices[0].Message.Content
-	}
-
-	actualModel := ocr.Model
-	if actualModel == "" {
-		actualModel = model
-	}
-
-	return &Response{
-		Content: content,
-		Model:   actualModel,
-		Tokens: TokenUsage{
-			PromptTokens:     ocr.Usage.PromptTokens,
-			CompletionTokens: ocr.Usage.CompletionTokens,
-			TotalTokens:      ocr.Usage.TotalTokens,
-		},
-		Latency: time.Since(start),
-		Raw:     raw,
-	}, nil
+	return nil, lastErr
 }
 
 // openaiChatResponse is the wire format for OpenAI-compatible chat completions.
